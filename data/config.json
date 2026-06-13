@@ -10,7 +10,11 @@
     },
     "colemak": {
       "layout": "data/layouts/samples/toy_simul.txt",
-      "toggles": { "enable_sands": false }
+      "toggles": {
+        "enable_sands": false,
+        "enable_gestures": false,
+        "enable_shortcuts": false
+      }
     }
   },
   "app_map": {

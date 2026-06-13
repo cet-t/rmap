@@ -35,6 +35,28 @@ pub fn log(msg: impl AsRef<str>) {
     let _ = writeln!(file, "[{}] {}", timestamp(), msg.as_ref());
 }
 
+/// Print a line to stdout and append the same line (English) to the log
+/// file, so console output and the log file never drift apart.
+#[macro_export]
+macro_rules! notify {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        println!("{msg}");
+        $crate::log::log(&msg);
+    }};
+}
+
+/// Print a line to stderr and append the same line (English) to the log
+/// file, so console output and the log file never drift apart.
+#[macro_export]
+macro_rules! notify_err {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        eprintln!("{msg}");
+        $crate::log::log(&msg);
+    }};
+}
+
 /// UTC timestamp "YYYY-MM-DD HH:MM:SS" without pulling in a date dependency.
 fn timestamp() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);

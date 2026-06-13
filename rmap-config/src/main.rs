@@ -9,7 +9,7 @@
 
 use anyhow::Result;
 use rmap_core::config::AppConfig;
-use rmap_core::ipc::{send_reload_command, IpcResponse};
+use rmap_core::ipc::{send_command, send_reload_command, IpcCommand, IpcResponse};
 use slint::{Model, VecModel};
 use std::path::Path;
 use std::rc::Rc;
@@ -25,11 +25,32 @@ slint::slint! {
         shortcuts: bool,
     }
 
+    component CategoryItem inherits Rectangle {
+        in property <string> label;
+        in property <bool> selected;
+        callback clicked();
+
+        height: 36px;
+        background: selected ? #3a3a50 : transparent;
+
+        Text {
+            text: label;
+            x: 10px;
+            vertical-alignment: center;
+            color: selected ? white : black;
+        }
+
+        TouchArea {
+            clicked => { root.clicked(); }
+        }
+    }
+
     export component AppWindow inherits Window {
         title: "rmap 設定";
-        preferred-width: 540px;
-        preferred-height: 560px;
+        preferred-width: 680px;
+        preferred-height: 480px;
 
+        in-out property <int> category_index: 0;
         in-out property <string> default_layout;
         in-out property <int> default_profile_index: 0;
         in-out property <bool> enable_log;
@@ -43,6 +64,9 @@ slint::slint! {
         in property <string> status_text;
 
         callback save();
+        callback resume();
+        callback stop();
+        callback restart();
         callback browse_default_layout();
         callback browse_profile_layout();
         callback profile_layout_edited(string);
@@ -50,69 +74,143 @@ slint::slint! {
         callback toggle_profile_gestures();
         callback toggle_profile_shortcuts();
 
-        ScrollView {
+        HorizontalBox {
+            padding: 0px;
+            spacing: 0px;
+
+            // Left pane: category list (flush, no gaps between items).
             VerticalBox {
-                Text { text: "全般"; font-weight: 700; }
-                HorizontalBox {
-                    Text { text: "デフォルトレイアウト:"; vertical-alignment: center; }
-                    LineEdit { text <=> default_layout; }
-                    Button { text: "📁"; clicked => { browse_default_layout(); } }
+                width: 160px;
+                padding: 0px;
+                spacing: 0px;
+                CategoryItem {
+                    label: "全般";
+                    selected: category_index == 0;
+                    clicked => { category_index = 0; }
                 }
-                HorizontalBox {
-                    Text { text: "デフォルトプロファイル:"; vertical-alignment: center; }
-                    ComboBox {
-                        model: profile_names;
-                        current-index <=> default_profile_index;
+                CategoryItem {
+                    label: "キー無効化";
+                    selected: category_index == 1;
+                    clicked => { category_index = 1; }
+                }
+                CategoryItem {
+                    label: "ログ";
+                    selected: category_index == 2;
+                    clicked => { category_index = 2; }
+                }
+                CategoryItem {
+                    label: "プロファイル";
+                    selected: category_index == 3;
+                    clicked => { category_index = 3; }
+                }
+                CategoryItem {
+                    label: "デーモン操作";
+                    selected: category_index == 4;
+                    clicked => { category_index = 4; }
+                }
+                Rectangle {}
+            }
+
+            // Divider line between the category list and the settings pane.
+            Rectangle {
+                width: 1px;
+                background: #c0c0c0;
+            }
+
+            // Right pane: settings for the selected category, with a
+            // save bar pinned to the bottom regardless of scroll position.
+            VerticalBox {
+                padding: 0px;
+                spacing: 0px;
+
+                ScrollView {
+                    VerticalBox {
+                        if category_index == 0 : VerticalBox {
+                            Text { text: "全般"; font-weight: 700; }
+                            HorizontalBox {
+                                Text { text: "デフォルトレイアウト:"; vertical-alignment: center; }
+                                LineEdit { text <=> default_layout; }
+                                Button { text: "📁"; clicked => { browse_default_layout(); } }
+                            }
+                            HorizontalBox {
+                                Text { text: "デフォルトプロファイル:"; vertical-alignment: center; }
+                                ComboBox {
+                                    model: profile_names;
+                                    current-index <=> default_profile_index;
+                                }
+                            }
+                        }
+
+                        if category_index == 1 : VerticalBox {
+                            Text { text: "一時無効化キー（押している間は全パススルー）"; font-weight: 700; }
+                            HorizontalBox {
+                                CheckBox { text: "Ctrl"; checked <=> disable_ctrl; }
+                                CheckBox { text: "Alt"; checked <=> disable_alt; }
+                                CheckBox { text: "Win"; checked <=> disable_win; }
+                                CheckBox { text: "Shift"; checked <=> disable_shift; }
+                            }
+                        }
+
+                        if category_index == 2 : VerticalBox {
+                            Text { text: "ログ"; font-weight: 700; }
+                            CheckBox { text: "ログを有効にする (実行ファイルと同じフォルダの ./log に出力)"; checked <=> enable_log; }
+                        }
+
+                        if category_index == 3 : VerticalBox {
+                            Text { text: "プロファイル"; font-weight: 700; }
+                            ComboBox {
+                                model: profile_names;
+                                current-index <=> current_profile_index;
+                            }
+                            if profiles.length > 0 && current_profile_index >= 0 : VerticalBox {
+                                HorizontalBox {
+                                    Text { text: "レイアウト:"; vertical-alignment: center; }
+                                    LineEdit {
+                                        text: profiles[current_profile_index].layout;
+                                        edited(text) => { profile_layout_edited(text); }
+                                    }
+                                    Button { text: "📁"; clicked => { browse_profile_layout(); } }
+                                }
+                                HorizontalBox {
+                                    CheckBox {
+                                        text: "SandS";
+                                        checked: profiles[current_profile_index].sands;
+                                        toggled => { toggle_profile_sands(); }
+                                    }
+                                    CheckBox {
+                                        text: "Gestures";
+                                        checked: profiles[current_profile_index].gestures;
+                                        toggled => { toggle_profile_gestures(); }
+                                    }
+                                    CheckBox {
+                                        text: "Shortcuts";
+                                        checked: profiles[current_profile_index].shortcuts;
+                                        toggled => { toggle_profile_shortcuts(); }
+                                    }
+                                }
+                            }
+                        }
+
+                        if category_index == 4 : VerticalBox {
+                            Text { text: "デーモン操作"; font-weight: 700; }
+                            HorizontalBox {
+                                Button { text: "再生"; clicked => { resume(); } }
+                                Button { text: "停止"; clicked => { stop(); } }
+                                Button { text: "再起動"; clicked => { restart(); } }
+                            }
+                        }
                     }
                 }
 
-                Text { text: "一時無効化キー（押している間は全パススルー）"; font-weight: 700; }
-                HorizontalBox {
-                    CheckBox { text: "Ctrl"; checked <=> disable_ctrl; }
-                    CheckBox { text: "Alt"; checked <=> disable_alt; }
-                    CheckBox { text: "Win"; checked <=> disable_win; }
-                    CheckBox { text: "Shift"; checked <=> disable_shift; }
-                }
-
-                Text { text: "ログ"; font-weight: 700; }
-                CheckBox { text: "ログを有効にする (実行ファイルと同じフォルダの ./log に出力)"; checked <=> enable_log; }
-
-                Text { text: "プロファイル"; font-weight: 700; }
-                ComboBox {
-                    model: profile_names;
-                    current-index <=> current_profile_index;
-                }
-                if profiles.length > 0 && current_profile_index >= 0 : VerticalBox {
-                    HorizontalBox {
-                        Text { text: "レイアウト:"; vertical-alignment: center; }
-                        LineEdit {
-                            text: profiles[current_profile_index].layout;
-                            edited(text) => { profile_layout_edited(text); }
-                        }
-                        Button { text: "📁"; clicked => { browse_profile_layout(); } }
-                    }
-                    HorizontalBox {
-                        CheckBox {
-                            text: "SandS";
-                            checked: profiles[current_profile_index].sands;
-                            toggled => { toggle_profile_sands(); }
-                        }
-                        CheckBox {
-                            text: "Gestures";
-                            checked: profiles[current_profile_index].gestures;
-                            toggled => { toggle_profile_gestures(); }
-                        }
-                        CheckBox {
-                            text: "Shortcuts";
-                            checked: profiles[current_profile_index].shortcuts;
-                            toggled => { toggle_profile_shortcuts(); }
-                        }
-                    }
+                // Divider line above the always-visible save bar.
+                Rectangle {
+                    height: 1px;
+                    background: #c0c0c0;
                 }
 
                 HorizontalBox {
+                    Text { text: status_text; vertical-alignment: center; horizontal-stretch: 1; }
                     Button { text: "保存"; clicked => { save(); } }
-                    Text { text: status_text; vertical-alignment: center; }
                 }
             }
         }
@@ -310,6 +408,26 @@ fn run_settings_window() -> Result<()> {
         }
     });
 
+    // デーモン操作（再生／停止／再起動）。デーモンが起動していない場合は
+    // status_text にエラーを表示するだけ（NFR-4 fail-fast）。
+    let window_weak = window.as_weak();
+    window.on_resume(move || {
+        let window = window_weak.unwrap();
+        report_ipc_result(&window, send_command(&IpcCommand::Resume), "再生しました");
+    });
+
+    let window_weak = window.as_weak();
+    window.on_stop(move || {
+        let window = window_weak.unwrap();
+        report_ipc_result(&window, send_command(&IpcCommand::Stop), "停止しました");
+    });
+
+    let window_weak = window.as_weak();
+    window.on_restart(move || {
+        let window = window_weak.unwrap();
+        report_ipc_result(&window, send_command(&IpcCommand::Restart), "再起動しました");
+    });
+
     let mut base_cfg = cfg;
     let window_weak = window.as_weak();
     let model = profiles_model.clone();
@@ -355,6 +473,15 @@ fn run_settings_window() -> Result<()> {
 
     window.run()?;
     Ok(())
+}
+
+/// Reflect the result of an IPC daemon-control command in the status line.
+fn report_ipc_result(window: &AppWindow, result: anyhow::Result<IpcResponse>, ok_text: &str) {
+    match result {
+        Ok(IpcResponse::Ok) => window.set_status_text(ok_text.into()),
+        Ok(r) => window.set_status_text(format!("{r:?}").into()),
+        Err(e) => window.set_status_text(format!("デーモンに接続できません: {e}").into()),
+    }
 }
 
 fn save_config(cfg: &AppConfig) -> Result<()> {

@@ -6,7 +6,7 @@
 pub mod windows;
 
 #[cfg(target_os = "windows")]
-pub use windows::{start_ipc_server, send_reload_command};
+pub use windows::{start_ipc_server, send_command, send_reload_command};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum IpcCommand {
@@ -17,6 +17,8 @@ pub enum IpcCommand {
     Stop,
     Resume,
     ToggleRunning,
+    /// Re-exec the daemon (same as tray 再起動).
+    Restart,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

@@ -47,7 +47,10 @@ pub struct ProfileDef {
 impl AppConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let s = std::fs::read_to_string(path)?;
-        let cfg: AppConfig = serde_json::from_str(&s)?;
+        // Strip a UTF-8 BOM: Notepad and PowerShell's `Set-Content -Encoding
+        // utf8` both write one, which serde_json otherwise rejects.
+        let s = s.strip_prefix('\u{feff}').unwrap_or(&s);
+        let cfg: AppConfig = serde_json::from_str(s)?;
         Ok(cfg)
     }
 

@@ -28,8 +28,7 @@ fn main() -> Result<()> {
     println!("Live remap: Space+letter (per sample grid) -> shifted; Space tap -> Space.");
 
     if !Path::new("data/config.json").exists() {
-        println!("(note: data/config.json not found; using embedded layout inside hook)");
-        log::log("data/config.json not found; using embedded layout");
+        rmap_core::notify!("note: data/config.json not found; using embedded layout");
     }
 
     // Start the low-level hook on its own thread (message pump for LL keyboard).
@@ -39,13 +38,14 @@ fn main() -> Result<()> {
     // Create a minimal tray icon + menu.
     let icon = create_simple_icon();
     let tray_menu = Menu::new();
-    let resume_item = MenuItem::new("再生", true, None);   // FR-8 resume (set_suspend false)
-    let stop_item = MenuItem::new("停止", true, None);     // FR-8 stop   (set_suspend true)
+    // FR-8: single toggle item, label reflects current state (再生 when
+    // suspended -> click resumes; 停止 when running -> click suspends).
+    let mut suspended = is_suspended();
+    let toggle_item = MenuItem::new(if suspended { "再生" } else { "停止" }, true, None);
     let restart_item = MenuItem::new("再起動", true, None); // re-exec the daemon
     let settings_item = MenuItem::new("設定", true, None);  // open config.json in default app
     let quit_item = MenuItem::new("終了", true, None);
-    tray_menu.append(&resume_item).ok();
-    tray_menu.append(&stop_item).ok();
+    tray_menu.append(&toggle_item).ok();
     tray_menu.append(&restart_item).ok();
     tray_menu.append(&PredefinedMenuItem::separator()).ok();
     tray_menu.append(&settings_item).ok();
@@ -72,8 +72,7 @@ fn main() -> Result<()> {
     start_ipc_server(|cmd| {
         match cmd {
             rmap_core::ipc::IpcCommand::Reload => {
-                println!("IPC: reload");
-                log::log("IPC: reload");
+                rmap_core::notify!("IPC: reload");
                 reload_layout();
                 rmap_core::ipc::IpcResponse::Ok
             }
@@ -85,28 +84,32 @@ fn main() -> Result<()> {
                 }
             }
             rmap_core::ipc::IpcCommand::Quit => {
-                println!("IPC: quit requested");
-                log::log("IPC: quit requested");
+                rmap_core::notify!("IPC: quit requested");
                 // In real: signal main loop; for prototype we just ack.
                 rmap_core::ipc::IpcResponse::Ok
             }
             // FR-8: daemon control hotkeys / commands.
             rmap_core::ipc::IpcCommand::Stop => {
-                println!("IPC: stop (suspend remapping)");
-                log::log("IPC: stop (suspend remapping)");
+                rmap_core::notify!("IPC: stop (suspend remapping)");
                 set_suspend(true);
                 rmap_core::ipc::IpcResponse::Ok
             }
             rmap_core::ipc::IpcCommand::Resume => {
-                println!("IPC: resume remapping");
-                log::log("IPC: resume remapping");
+                rmap_core::notify!("IPC: resume remapping");
                 set_suspend(false);
                 rmap_core::ipc::IpcResponse::Ok
             }
             rmap_core::ipc::IpcCommand::ToggleRunning => {
                 let now = toggle_suspend();
-                println!("IPC: toggle running -> {}", if now { "stopped" } else { "running" });
-                log::log(format!("IPC: toggle running -> {}", if now { "stopped" } else { "running" }));
+                rmap_core::notify!("IPC: toggle running -> {}", if now { "stopped" } else { "running" });
+                rmap_core::ipc::IpcResponse::Ok
+            }
+            rmap_core::ipc::IpcCommand::Restart => {
+                rmap_core::notify!("IPC: restart requested");
+                // Restart on its own thread: restart_daemon() spawns a fresh
+                // copy and exits this process, which we don't want to do from
+                // inside the IPC server's response handler.
+                std::thread::spawn(restart_daemon);
                 rmap_core::ipc::IpcResponse::Ok
             }
         }
@@ -120,25 +123,23 @@ fn main() -> Result<()> {
 
         // Menu
         if let Ok(event) = menu_channel.try_recv() {
-            if event.id == resume_item.id() {
-                set_suspend(false);
-                println!("Tray: 再生 (remap resumed)");
-                log::log("tray: resume (remap resumed)");
-            } else if event.id == stop_item.id() {
-                set_suspend(true);
-                println!("Tray: 停止 (remap paused)");
-                log::log("tray: stop (remap paused)");
+            if event.id == toggle_item.id() {
+                let now_suspended = toggle_suspend();
+                suspended = now_suspended;
+                toggle_item.set_text(if suspended { "再生" } else { "停止" });
+                if suspended {
+                    rmap_core::notify!("Tray: stop (remap paused)");
+                } else {
+                    rmap_core::notify!("Tray: resume (remap resumed)");
+                }
             } else if event.id == restart_item.id() {
-                println!("Tray: 再起動 (restarting daemon)");
-                log::log("tray: restart");
+                rmap_core::notify!("Tray: restart (restarting daemon)");
                 restart_daemon();
             } else if event.id == settings_item.id() {
-                println!("Tray: 設定 (opening config)");
-                log::log("tray: open settings");
+                rmap_core::notify!("Tray: settings (opening config)");
                 open_settings();
             } else if event.id == quit_item.id() {
-                println!("Tray: 終了 (quit)");
-                log::log("tray: quit");
+                rmap_core::notify!("Tray: quit");
                 std::process::exit(0);
             }
         }
@@ -152,11 +153,18 @@ fn main() -> Result<()> {
                     s.ends_with(".txt") || s.ends_with("config.json")
                 });
                 if relevant {
-                    println!("Watcher: layout/config change detected -> reload");
-                    log::log("watcher: layout/config change detected -> reload");
+                    rmap_core::notify!("Watcher: layout/config change detected -> reload");
                     reload_layout();
                 }
             }
+        }
+
+        // Pick up suspend/resume state changes made via IPC (settings app) so
+        // the tray label stays in sync even when not triggered from this menu.
+        let now_suspended = is_suspended();
+        if now_suspended != suspended {
+            suspended = now_suspended;
+            toggle_item.set_text(if suspended { "再生" } else { "停止" });
         }
 
         // Short idle so the first right-click is dispatched promptly (the popup
@@ -192,10 +200,10 @@ fn restart_daemon() {
                     std::thread::sleep(Duration::from_millis(300));
                     std::process::exit(0);
                 }
-                Err(e) => eprintln!("再起動 failed (spawn): {e}"),
+                Err(e) => rmap_core::notify_err!("restart failed (spawn): {e}"),
             }
         }
-        Err(e) => eprintln!("再起動 failed (current_exe): {e}"),
+        Err(e) => rmap_core::notify_err!("restart failed (current_exe): {e}"),
     }
 }
 
@@ -211,10 +219,7 @@ fn open_settings() {
         if exe.exists() {
             match std::process::Command::new(exe).spawn() {
                 Ok(_) => log::log(format!("settings: launched {}", exe.display())),
-                Err(e) => {
-                    eprintln!("設定 failed to launch {}: {e}", exe.display());
-                    log::log(format!("settings: failed to launch {}: {e}", exe.display()));
-                }
+                Err(e) => rmap_core::notify_err!("settings: failed to launch {}: {e}", exe.display()),
             }
             return;
         }
@@ -230,8 +235,7 @@ fn open_settings() {
         .args(["/C", "start", "", target])
         .spawn()
     {
-        eprintln!("設定 failed to open {target}: {e}");
-        log::log(format!("settings: failed to open {target}: {e}"));
+        rmap_core::notify_err!("settings: failed to open {target}: {e}");
     }
 }
 

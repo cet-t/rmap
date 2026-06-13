@@ -13,6 +13,7 @@ pub struct Profile {
 pub type ProfileId = String;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ProfileToggles {
     pub enable_sands: bool,      // Space as Shift
     pub enable_gestures: bool,

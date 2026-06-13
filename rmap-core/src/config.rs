@@ -16,6 +16,10 @@ pub struct AppConfig {
     /// Generic modifier names expand to both L/R variants. Empty = feature off.
     #[serde(default)]
     pub disable_keys: Vec<String>,
+    /// When true, write diagnostic/event lines (English) to a `log` file next
+    /// to the daemon executable. Default off.
+    #[serde(default)]
+    pub enable_log: bool,
 }
 
 /// Expand a config key name to the concrete `KeyCode`s it covers. Generic
@@ -82,6 +86,7 @@ impl AppConfig {
             },
             default_layout: "data/layouts/samples/toy_simul.txt".to_string(),
             disable_keys: Vec::new(),
+            enable_log: false,
         }
     }
 

@@ -17,5 +17,7 @@
     "per_app": {},
     "default_profile": "default"
   },
-  "default_layout": "data/layouts/samples/toy_simul.txt"
+  "default_layout": "data/layouts/samples/toy_simul.txt",
+  "disable_keys": [],
+  "enable_log": false
 }

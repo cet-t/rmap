@@ -8,6 +8,7 @@ pub mod ipc;
 pub mod keycode;
 pub mod layout;
 pub mod loader;
+pub mod log;
 pub mod matcher;
 pub mod modifiers;
 pub mod output;

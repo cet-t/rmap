@@ -1,8 +1,10 @@
 //! rmap-daemon: resident remapper. Owns hooks, applies layouts, IPC server, tray.
 
 use anyhow::Result;
+use rmap_core::config::AppConfig;
 use rmap_core::hook::{install_and_run_windows_hook, reload_layout, set_suspend, toggle_suspend, is_suspended};
 use rmap_core::ipc::start_ipc_server;
+use rmap_core::log;
 use std::path::Path;
 use std::time::Duration;
 use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent}};
@@ -13,6 +15,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> Result<()> {
+    // Load config early so we know whether file logging is enabled (it must
+    // be init'd before any log::log() call; install_and_run_windows_hook()
+    // also loads AppConfig itself for the hook state, independently).
+    let startup_cfg = AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
+    log::init(startup_cfg.enable_log);
+    log::log("daemon starting");
+
     println!("rmap-daemon (Windows prototype) starting real hook + tray + watcher...");
     println!("Config: data/config.json (or falls back to embedded sample).");
     println!("Tray: right-click for 再生 / 停止 / 再起動 / 設定 / 終了. Layout changes also reload automatically on file watch.");
@@ -20,10 +29,12 @@ fn main() -> Result<()> {
 
     if !Path::new("data/config.json").exists() {
         println!("(note: data/config.json not found; using embedded layout inside hook)");
+        log::log("data/config.json not found; using embedded layout");
     }
 
     // Start the low-level hook on its own thread (message pump for LL keyboard).
     let _hook_handle = install_and_run_windows_hook();
+    log::log("keyboard hook installed");
 
     // Create a minimal tray icon + menu.
     let icon = create_simple_icon();
@@ -62,6 +73,7 @@ fn main() -> Result<()> {
         match cmd {
             rmap_core::ipc::IpcCommand::Reload => {
                 println!("IPC: reload");
+                log::log("IPC: reload");
                 reload_layout();
                 rmap_core::ipc::IpcResponse::Ok
             }
@@ -74,23 +86,27 @@ fn main() -> Result<()> {
             }
             rmap_core::ipc::IpcCommand::Quit => {
                 println!("IPC: quit requested");
+                log::log("IPC: quit requested");
                 // In real: signal main loop; for prototype we just ack.
                 rmap_core::ipc::IpcResponse::Ok
             }
             // FR-8: daemon control hotkeys / commands.
             rmap_core::ipc::IpcCommand::Stop => {
                 println!("IPC: stop (suspend remapping)");
+                log::log("IPC: stop (suspend remapping)");
                 set_suspend(true);
                 rmap_core::ipc::IpcResponse::Ok
             }
             rmap_core::ipc::IpcCommand::Resume => {
                 println!("IPC: resume remapping");
+                log::log("IPC: resume remapping");
                 set_suspend(false);
                 rmap_core::ipc::IpcResponse::Ok
             }
             rmap_core::ipc::IpcCommand::ToggleRunning => {
                 let now = toggle_suspend();
                 println!("IPC: toggle running -> {}", if now { "stopped" } else { "running" });
+                log::log(format!("IPC: toggle running -> {}", if now { "stopped" } else { "running" }));
                 rmap_core::ipc::IpcResponse::Ok
             }
         }
@@ -107,17 +123,22 @@ fn main() -> Result<()> {
             if event.id == resume_item.id() {
                 set_suspend(false);
                 println!("Tray: 再生 (remap resumed)");
+                log::log("tray: resume (remap resumed)");
             } else if event.id == stop_item.id() {
                 set_suspend(true);
                 println!("Tray: 停止 (remap paused)");
+                log::log("tray: stop (remap paused)");
             } else if event.id == restart_item.id() {
                 println!("Tray: 再起動 (restarting daemon)");
+                log::log("tray: restart");
                 restart_daemon();
             } else if event.id == settings_item.id() {
                 println!("Tray: 設定 (opening config)");
+                log::log("tray: open settings");
                 open_settings();
             } else if event.id == quit_item.id() {
                 println!("Tray: 終了 (quit)");
+                log::log("tray: quit");
                 std::process::exit(0);
             }
         }
@@ -132,6 +153,7 @@ fn main() -> Result<()> {
                 });
                 if relevant {
                     println!("Watcher: layout/config change detected -> reload");
+                    log::log("watcher: layout/config change detected -> reload");
                     reload_layout();
                 }
             }

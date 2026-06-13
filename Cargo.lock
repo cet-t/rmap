@@ -4079,6 +4079,7 @@ dependencies = [
  "rmap-core",
  "serde_json",
  "slint",
+ "windows 0.52.0",
 ]
 
 [[package]]

@@ -85,7 +85,12 @@ fn main() -> Result<()> {
             }
             rmap_core::ipc::IpcCommand::Quit => {
                 rmap_core::notify!("IPC: quit requested");
-                // In real: signal main loop; for prototype we just ack.
+                // Exit on its own thread after a short delay so the IPC
+                // response below reaches the client first (mirrors restart).
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_millis(200));
+                    std::process::exit(0);
+                });
                 rmap_core::ipc::IpcResponse::Ok
             }
             // FR-8: daemon control hotkeys / commands.

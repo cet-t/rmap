@@ -62,11 +62,15 @@ slint::slint! {
         in property <[string]> profile_names;
         in-out property <int> current_profile_index: 0;
         in property <string> status_text;
+        in property <string> running_status_text;
+        in property <bool> daemon_suspended;
+        in property <string> current_profile_text;
+        in property <string> current_layout_text;
 
         callback save();
-        callback resume();
-        callback stop();
+        callback toggle_running();
         callback restart();
+        callback quit();
         callback browse_default_layout();
         callback browse_profile_layout();
         callback profile_layout_edited(string);
@@ -108,6 +112,7 @@ slint::slint! {
                     selected: category_index == 4;
                     clicked => { category_index = 4; }
                 }
+
                 Rectangle {}
             }
 
@@ -192,11 +197,18 @@ slint::slint! {
                         }
 
                         if category_index == 4 : VerticalBox {
+                            vertical-stretch: 0;
                             Text { text: "デーモン操作"; font-weight: 700; }
                             HorizontalBox {
-                                Button { text: "再生"; clicked => { resume(); } }
-                                Button { text: "停止"; clicked => { stop(); } }
-                                Button { text: "再起動"; clicked => { restart(); } }
+                                vertical-stretch: 0;
+                                alignment: start;
+                                Button {
+                                    text: daemon_suspended ? "再生" : "停止";
+                                    width: 80px; height: 32px; horizontal-stretch: 0;
+                                    clicked => { toggle_running(); }
+                                }
+                                Button { text: "再起動"; width: 80px; height: 32px; horizontal-stretch: 0; clicked => { restart(); } }
+                                Button { text: "終了"; width: 80px; height: 32px; horizontal-stretch: 0; clicked => { quit(); } }
                             }
                         }
                     }
@@ -209,6 +221,14 @@ slint::slint! {
                 }
 
                 HorizontalBox {
+                    VerticalBox {
+                        padding: 0px;
+                        spacing: 2px;
+                        alignment: start;
+                        Text { text: "状態: " + running_status_text; wrap: word-wrap; }
+                        Text { text: "プロファイル: " + current_profile_text; wrap: word-wrap; }
+                        Text { text: "レイアウト: " + current_layout_text; wrap: word-wrap; }
+                    }
                     Text { text: status_text; vertical-alignment: center; horizontal-stretch: 1; }
                     Button { text: "保存"; clicked => { save(); } }
                 }
@@ -240,7 +260,45 @@ fn main() -> Result<()> {
         _ => {}
     }
 
+    // Avoid piling up windows when 設定 is pressed repeatedly from the tray:
+    // if a settings window is already open, just bring it to front.
+    if focus_existing_window() {
+        return Ok(());
+    }
+
     run_settings_window()
+}
+
+/// Find an already-open settings window by its title and bring it to the
+/// foreground. Returns true if such a window was found (and this process
+/// should exit without creating a new one).
+#[cfg(windows)]
+fn focus_existing_window() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    let title: Vec<u16> = "rmap 設定"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr()));
+        if hwnd.0 == 0 {
+            return false;
+        }
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(hwnd);
+        true
+    }
+}
+
+#[cfg(not(windows))]
+fn focus_existing_window() -> bool {
+    false
 }
 
 const CONFIG_PATH: &str = "data/config.json";
@@ -252,7 +310,9 @@ fn pick_layout_file() -> Option<String> {
     if start_dir.exists() {
         dialog = dialog.set_directory(start_dir);
     }
-    dialog.pick_file().map(|p| p.to_string_lossy().replace('\\', "/"))
+    dialog
+        .pick_file()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
 }
 
 fn run_settings_window() -> Result<()> {
@@ -270,7 +330,11 @@ fn run_settings_window() -> Result<()> {
         .collect();
     window.set_disable_ctrl(lower_disable.iter().any(|s| s == "ctrl" || s == "control"));
     window.set_disable_alt(lower_disable.iter().any(|s| s == "alt" || s == "menu"));
-    window.set_disable_win(lower_disable.iter().any(|s| matches!(s.as_str(), "win" | "meta" | "super" | "cmd")));
+    window.set_disable_win(
+        lower_disable
+            .iter()
+            .any(|s| matches!(s.as_str(), "win" | "meta" | "super" | "cmd")),
+    );
     window.set_disable_shift(lower_disable.iter().any(|s| s == "shift"));
 
     // Keep custom (non ctrl/alt/win/shift) entries so we round-trip them unchanged.
@@ -305,7 +369,10 @@ fn run_settings_window() -> Result<()> {
     window.set_profiles(slint::ModelRc::from(profiles_model.clone()));
 
     let names_model = Rc::new(VecModel::from(
-        profile_names.iter().map(|n| n.clone().into()).collect::<Vec<slint::SharedString>>(),
+        profile_names
+            .iter()
+            .map(|n| n.clone().into())
+            .collect::<Vec<slint::SharedString>>(),
     ));
     window.set_profile_names(slint::ModelRc::from(names_model));
     window.set_current_profile_index(if profile_names.is_empty() { -1 } else { 0 });
@@ -318,6 +385,8 @@ fn run_settings_window() -> Result<()> {
     window.set_default_profile_index(default_profile_index);
 
     window.set_status_text("".into());
+    refresh_profile_layout_text(&window, &cfg);
+    refresh_daemon_status(&window);
 
     // 設定 -> デフォルトレイアウトの参照ファイルを選択ダイアログで指定する。
     let window_weak = window.as_weak();
@@ -408,24 +477,31 @@ fn run_settings_window() -> Result<()> {
         }
     });
 
-    // デーモン操作（再生／停止／再起動）。デーモンが起動していない場合は
-    // status_text にエラーを表示するだけ（NFR-4 fail-fast）。
+    // デーモン操作（再生/停止トグル／再起動／終了）。デーモンが起動していない
+    // 場合は status_text にエラーを表示するだけ（NFR-4 fail-fast）。
     let window_weak = window.as_weak();
-    window.on_resume(move || {
+    window.on_toggle_running(move || {
         let window = window_weak.unwrap();
-        report_ipc_result(&window, send_command(&IpcCommand::Resume), "再生しました");
+        report_ipc_result(&window, send_command(&IpcCommand::ToggleRunning), "切り替えました");
+        refresh_daemon_status(&window);
     });
 
     let window_weak = window.as_weak();
-    window.on_stop(move || {
+    window.on_quit(move || {
         let window = window_weak.unwrap();
-        report_ipc_result(&window, send_command(&IpcCommand::Stop), "停止しました");
+        report_ipc_result(&window, send_command(&IpcCommand::Quit), "終了しました");
+        refresh_daemon_status(&window);
     });
 
     let window_weak = window.as_weak();
     window.on_restart(move || {
         let window = window_weak.unwrap();
-        report_ipc_result(&window, send_command(&IpcCommand::Restart), "再起動しました");
+        report_ipc_result(
+            &window,
+            send_command(&IpcCommand::Restart),
+            "再起動しました",
+        );
+        refresh_daemon_status(&window);
     });
 
     let mut base_cfg = cfg;
@@ -469,6 +545,7 @@ fn run_settings_window() -> Result<()> {
             Ok(()) => window.set_status_text("保存しました".into()),
             Err(e) => window.set_status_text(format!("保存に失敗: {e}").into()),
         }
+        refresh_profile_layout_text(&window, &base_cfg);
     });
 
     window.run()?;
@@ -482,6 +559,33 @@ fn report_ipc_result(window: &AppWindow, result: anyhow::Result<IpcResponse>, ok
         Ok(r) => window.set_status_text(format!("{r:?}").into()),
         Err(e) => window.set_status_text(format!("デーモンに接続できません: {e}").into()),
     }
+}
+
+/// Query the daemon's running/suspended state via IPC and update the
+/// left-pane status panel. Shows "未起動" if the daemon isn't reachable.
+fn refresh_daemon_status(window: &AppWindow) {
+    let (text, suspended) = match send_command(&IpcCommand::Status) {
+        Ok(IpcResponse::Status { suspended, .. }) => {
+            (if suspended { "停止中" } else { "稼働中" }, suspended)
+        }
+        // Daemon unreachable: show "再生" as the actionable toggle label.
+        _ => ("未起動", true),
+    };
+    window.set_running_status_text(text.into());
+    window.set_daemon_suspended(suspended);
+}
+
+/// Update the left-pane "current profile / layout" display from `cfg`'s
+/// default profile.
+fn refresh_profile_layout_text(window: &AppWindow, cfg: &AppConfig) {
+    let profile = cfg.app_map.default_profile.clone();
+    let layout = cfg
+        .profiles
+        .get(&profile)
+        .map(|p| p.layout.clone())
+        .unwrap_or_else(|| cfg.default_layout.clone());
+    window.set_current_profile_text(profile.into());
+    window.set_current_layout_text(layout.into());
 }
 
 fn save_config(cfg: &AppConfig) -> Result<()> {

@@ -8,240 +8,36 @@
 //!   rmap-config quit       -> (stub)
 
 use anyhow::Result;
+use clap::{Parser, Subcommand};
 use rmap_core::config::AppConfig;
 use rmap_core::ipc::{send_command, send_reload_command, IpcCommand, IpcResponse};
 use slint::{Model, VecModel};
 use std::path::Path;
 use std::rc::Rc;
 
-slint::slint! {
-    import { Button, CheckBox, LineEdit, ComboBox, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+slint::include_modules!();
 
-    export struct ProfileRow {
-        name: string,
-        layout: string,
-        sands: bool,
-        gestures: bool,
-        shortcuts: bool,
-    }
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
 
-    component CategoryItem inherits Rectangle {
-        in property <string> label;
-        in property <bool> selected;
-        callback clicked();
-
-        height: 36px;
-        background: selected ? #3a3a50 : transparent;
-
-        Text {
-            text: label;
-            x: 10px;
-            vertical-alignment: center;
-            color: selected ? white : black;
-        }
-
-        TouchArea {
-            clicked => { root.clicked(); }
-        }
-    }
-
-    export component AppWindow inherits Window {
-        title: "rmap 設定";
-        preferred-width: 680px;
-        preferred-height: 480px;
-
-        in-out property <int> category_index: 0;
-        in-out property <string> default_layout;
-        in-out property <int> default_profile_index: 0;
-        in-out property <bool> enable_log;
-        in-out property <bool> disable_ctrl;
-        in-out property <bool> disable_alt;
-        in-out property <bool> disable_win;
-        in-out property <bool> disable_shift;
-        in-out property <[ProfileRow]> profiles;
-        in property <[string]> profile_names;
-        in-out property <int> current_profile_index: 0;
-        in property <string> status_text;
-        in property <string> running_status_text;
-        in property <bool> daemon_suspended;
-        in property <string> current_profile_text;
-        in property <string> current_layout_text;
-
-        callback save();
-        callback toggle_running();
-        callback restart();
-        callback quit();
-        callback browse_default_layout();
-        callback browse_profile_layout();
-        callback profile_layout_edited(string);
-        callback toggle_profile_sands();
-        callback toggle_profile_gestures();
-        callback toggle_profile_shortcuts();
-
-        HorizontalBox {
-            padding: 0px;
-            spacing: 0px;
-
-            // Left pane: category list (flush, no gaps between items).
-            VerticalBox {
-                width: 160px;
-                padding: 0px;
-                spacing: 0px;
-                CategoryItem {
-                    label: "全般";
-                    selected: category_index == 0;
-                    clicked => { category_index = 0; }
-                }
-                CategoryItem {
-                    label: "キー無効化";
-                    selected: category_index == 1;
-                    clicked => { category_index = 1; }
-                }
-                CategoryItem {
-                    label: "ログ";
-                    selected: category_index == 2;
-                    clicked => { category_index = 2; }
-                }
-                CategoryItem {
-                    label: "プロファイル";
-                    selected: category_index == 3;
-                    clicked => { category_index = 3; }
-                }
-                CategoryItem {
-                    label: "デーモン操作";
-                    selected: category_index == 4;
-                    clicked => { category_index = 4; }
-                }
-
-                Rectangle {}
-            }
-
-            // Divider line between the category list and the settings pane.
-            Rectangle {
-                width: 1px;
-                background: #c0c0c0;
-            }
-
-            // Right pane: settings for the selected category, with a
-            // save bar pinned to the bottom regardless of scroll position.
-            VerticalBox {
-                padding: 0px;
-                spacing: 0px;
-
-                ScrollView {
-                    VerticalBox {
-                        if category_index == 0 : VerticalBox {
-                            Text { text: "全般"; font-weight: 700; }
-                            HorizontalBox {
-                                Text { text: "デフォルトレイアウト:"; vertical-alignment: center; }
-                                LineEdit { text <=> default_layout; }
-                                Button { text: "📁"; clicked => { browse_default_layout(); } }
-                            }
-                            HorizontalBox {
-                                Text { text: "デフォルトプロファイル:"; vertical-alignment: center; }
-                                ComboBox {
-                                    model: profile_names;
-                                    current-index <=> default_profile_index;
-                                }
-                            }
-                        }
-
-                        if category_index == 1 : VerticalBox {
-                            Text { text: "一時無効化キー（押している間は全パススルー）"; font-weight: 700; }
-                            HorizontalBox {
-                                CheckBox { text: "Ctrl"; checked <=> disable_ctrl; }
-                                CheckBox { text: "Alt"; checked <=> disable_alt; }
-                                CheckBox { text: "Win"; checked <=> disable_win; }
-                                CheckBox { text: "Shift"; checked <=> disable_shift; }
-                            }
-                        }
-
-                        if category_index == 2 : VerticalBox {
-                            Text { text: "ログ"; font-weight: 700; }
-                            CheckBox { text: "ログを有効にする (実行ファイルと同じフォルダの ./log に出力)"; checked <=> enable_log; }
-                        }
-
-                        if category_index == 3 : VerticalBox {
-                            Text { text: "プロファイル"; font-weight: 700; }
-                            ComboBox {
-                                model: profile_names;
-                                current-index <=> current_profile_index;
-                            }
-                            if profiles.length > 0 && current_profile_index >= 0 : VerticalBox {
-                                HorizontalBox {
-                                    Text { text: "レイアウト:"; vertical-alignment: center; }
-                                    LineEdit {
-                                        text: profiles[current_profile_index].layout;
-                                        edited(text) => { profile_layout_edited(text); }
-                                    }
-                                    Button { text: "📁"; clicked => { browse_profile_layout(); } }
-                                }
-                                HorizontalBox {
-                                    CheckBox {
-                                        text: "SandS";
-                                        checked: profiles[current_profile_index].sands;
-                                        toggled => { toggle_profile_sands(); }
-                                    }
-                                    CheckBox {
-                                        text: "Gestures";
-                                        checked: profiles[current_profile_index].gestures;
-                                        toggled => { toggle_profile_gestures(); }
-                                    }
-                                    CheckBox {
-                                        text: "Shortcuts";
-                                        checked: profiles[current_profile_index].shortcuts;
-                                        toggled => { toggle_profile_shortcuts(); }
-                                    }
-                                }
-                            }
-                        }
-
-                        if category_index == 4 : VerticalBox {
-                            vertical-stretch: 0;
-                            Text { text: "デーモン操作"; font-weight: 700; }
-                            HorizontalBox {
-                                vertical-stretch: 0;
-                                alignment: start;
-                                Button {
-                                    text: daemon_suspended ? "再生" : "停止";
-                                    width: 80px; height: 32px; horizontal-stretch: 0;
-                                    clicked => { toggle_running(); }
-                                }
-                                Button { text: "再起動"; width: 80px; height: 32px; horizontal-stretch: 0; clicked => { restart(); } }
-                                Button { text: "終了"; width: 80px; height: 32px; horizontal-stretch: 0; clicked => { quit(); } }
-                            }
-                        }
-                    }
-                }
-
-                // Divider line above the always-visible save bar.
-                Rectangle {
-                    height: 1px;
-                    background: #c0c0c0;
-                }
-
-                HorizontalBox {
-                    VerticalBox {
-                        padding: 0px;
-                        spacing: 2px;
-                        alignment: start;
-                        Text { text: "状態: " + running_status_text; wrap: word-wrap; }
-                        Text { text: "プロファイル: " + current_profile_text; wrap: word-wrap; }
-                        Text { text: "レイアウト: " + current_layout_text; wrap: word-wrap; }
-                    }
-                    Text { text: status_text; vertical-alignment: center; horizontal-stretch: 1; }
-                    Button { text: "保存"; clicked => { save(); } }
-                }
-            }
-        }
-    }
+#[derive(Subcommand)]
+enum Commands {
+    /// Send IPC reload to the running daemon
+    Reload,
+    /// (stub) show daemon status
+    Status,
+    /// (stub) quit the daemon
+    Quit,
 }
 
 fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
-    match cmd {
-        "reload" => {
+    let cli = Cli::parse();
+    match cli.command {
+        Some(Commands::Reload) => {
             match send_reload_command() {
                 Ok(IpcResponse::Ok) => println!("reload sent"),
                 Ok(r) => println!("response: {:?}", r),
@@ -249,15 +45,15 @@ fn main() -> Result<()> {
             }
             return Ok(());
         }
-        "status" => {
+        Some(Commands::Status) => {
             println!("status: (IPC status not fully wired in prototype; daemon tray shows state)");
             return Ok(());
         }
-        "quit" => {
+        Some(Commands::Quit) => {
             println!("quit: (send IpcCommand::Quit via pipe in full impl)");
             return Ok(());
         }
-        _ => {}
+        None => {}
     }
 
     // Avoid piling up windows when 設定 is pressed repeatedly from the tray:
@@ -548,9 +344,53 @@ fn run_settings_window() -> Result<()> {
         refresh_profile_layout_text(&window, &base_cfg);
     });
 
-    window.run()?;
+    window.show()?;
+    spawn_always_on_top();
+    slint::run_event_loop()?;
+    window.hide()?;
     Ok(())
 }
+
+/// Pin the settings window above all others (Win32: SetWindowPos with
+/// HWND_TOPMOST). Runs on a background thread because the native window
+/// isn't registered with the OS until the event loop starts pumping
+/// messages, so we can't find it by title synchronously after `show()`.
+/// No-op on non-Windows targets.
+#[cfg(windows)]
+fn spawn_always_on_top() {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+
+    std::thread::spawn(|| {
+        let title: Vec<u16> = "rmap 設定"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        unsafe {
+            for _ in 0..40 {
+                let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr()));
+                if hwnd.0 != 0 {
+                    let _ = SetWindowPos(
+                        hwnd,
+                        HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                    );
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_always_on_top() {}
 
 /// Reflect the result of an IPC daemon-control command in the status line.
 fn report_ipc_result(window: &AppWindow, result: anyhow::Result<IpcResponse>, ok_text: &str) {

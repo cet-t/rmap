@@ -16,6 +16,7 @@ serde_json = "1"
 thiserror = "1"
 anyhow = "1"
 bitflags = "2"
+clap = { version = "4", features = ["derive"] }
 # Platform specific later
 # For now, keep minimal for Phase 1
 

@@ -12,6 +12,7 @@ path = "src/main.rs"
 rmap-core = { path = "../rmap-core" }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
 slint = "1.16"
 rfd = "0.15"
 
@@ -20,3 +21,6 @@ windows = { version = "0.52", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[build-dependencies]
+slint-build = "1.16"

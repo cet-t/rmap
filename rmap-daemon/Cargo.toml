@@ -14,3 +14,11 @@ anyhow = { workspace = true }
 tray-icon = "0.10"                    # for resident tray (prototype)
 notify = "6"                          # for config/layout hot reload (debounced)
 # For a real icon we could use image crate to load png, but for prototype we synthesize a small RGBA icon in code.
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# tray-icon on Windows needs a Win32 message pump on the thread that created
+# the icon, otherwise right-click menus never appear. We pump it ourselves.
+windows = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }

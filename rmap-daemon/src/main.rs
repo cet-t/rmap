@@ -5,14 +5,17 @@ use rmap_core::hook::{install_and_run_windows_hook, reload_layout, set_suspend, 
 use rmap_core::ipc::start_ipc_server;
 use std::path::Path;
 use std::time::Duration;
-use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, MenuEvent}};
+use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent}};
 use notify::{Watcher, RecursiveMode, RecommendedWatcher};
 use notify::event::EventKind;
+use windows::Win32::UI::WindowsAndMessaging::{
+    PeekMessageW, TranslateMessage, DispatchMessageW, MSG, PM_REMOVE,
+};
 
 fn main() -> Result<()> {
     println!("rmap-daemon (Windows prototype) starting real hook + tray + watcher...");
     println!("Config: data/config.json (or falls back to embedded sample).");
-    println!("Tray: right-click for Reload / Quit. Layout changes take effect immediately on reload or file watch.");
+    println!("Tray: right-click for 再生 / 停止 / 再起動 / 設定 / 終了. Layout changes also reload automatically on file watch.");
     println!("Live remap: Space+letter (per sample grid) -> shifted; Space tap -> Space.");
 
     if !Path::new("data/config.json").exists() {
@@ -25,11 +28,17 @@ fn main() -> Result<()> {
     // Create a minimal tray icon + menu.
     let icon = create_simple_icon();
     let tray_menu = Menu::new();
-    let reload_item = MenuItem::new("Reload layout", true, None);
-    let toggle_item = MenuItem::new("Pause / Resume remap", true, None); // FR-8
-    let quit_item = MenuItem::new("Quit", true, None);
-    tray_menu.append(&reload_item).ok();
-    tray_menu.append(&toggle_item).ok();
+    let resume_item = MenuItem::new("再生", true, None);   // FR-8 resume (set_suspend false)
+    let stop_item = MenuItem::new("停止", true, None);     // FR-8 stop   (set_suspend true)
+    let restart_item = MenuItem::new("再起動", true, None); // re-exec the daemon
+    let settings_item = MenuItem::new("設定", true, None);  // open config.json in default app
+    let quit_item = MenuItem::new("終了", true, None);
+    tray_menu.append(&resume_item).ok();
+    tray_menu.append(&stop_item).ok();
+    tray_menu.append(&restart_item).ok();
+    tray_menu.append(&PredefinedMenuItem::separator()).ok();
+    tray_menu.append(&settings_item).ok();
+    tray_menu.append(&PredefinedMenuItem::separator()).ok();
     tray_menu.append(&quit_item).ok();
 
     let _tray = TrayIconBuilder::new()
@@ -87,18 +96,28 @@ fn main() -> Result<()> {
         }
     });
 
-    // Main loop: tray menu + watcher + keep process alive.
+    // Main loop: pump Win32 messages (required so the tray icon's right-click
+    // menu appears and responds — tray-icon relies on the message queue of the
+    // thread that created the icon), then poll the menu/watcher channels.
     loop {
+        pump_win32_messages();
+
         // Menu
         if let Ok(event) = menu_channel.try_recv() {
-            if event.id == reload_item.id() {
-                println!("Tray: manual reload");
-                reload_layout();
-            } else if event.id == toggle_item.id() {
-                let stopped = toggle_suspend();
-                println!("Tray: remap {}", if stopped { "paused" } else { "resumed" });
+            if event.id == resume_item.id() {
+                set_suspend(false);
+                println!("Tray: 再生 (remap resumed)");
+            } else if event.id == stop_item.id() {
+                set_suspend(true);
+                println!("Tray: 停止 (remap paused)");
+            } else if event.id == restart_item.id() {
+                println!("Tray: 再起動 (restarting daemon)");
+                restart_daemon();
+            } else if event.id == settings_item.id() {
+                println!("Tray: 設定 (opening config)");
+                open_settings();
             } else if event.id == quit_item.id() {
-                println!("Tray: quit");
+                println!("Tray: 終了 (quit)");
                 std::process::exit(0);
             }
         }
@@ -118,7 +137,58 @@ fn main() -> Result<()> {
             }
         }
 
-        std::thread::sleep(Duration::from_millis(80));
+        // Short idle so the first right-click is dispatched promptly (the popup
+        // menu, once open, runs its own modal loop). Keeps CPU near zero.
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Drain all pending Win32 messages without blocking. The tray icon creates a
+/// hidden window on this thread; its right-click menu and click notifications
+/// are delivered as window messages, so they only work if we keep the queue
+/// pumped. `PM_REMOVE` dequeues; we Translate/Dispatch so menu commands fire.
+fn pump_win32_messages() {
+    let mut msg = MSG::default();
+    unsafe {
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
+
+/// 再起動: spawn a fresh copy of this executable (same args / cwd) and exit
+/// the current process. Effectively reinstalls the hook with reloaded config.
+fn restart_daemon() {
+    match std::env::current_exe() {
+        Ok(exe) => {
+            let args: Vec<String> = std::env::args().skip(1).collect();
+            match std::process::Command::new(&exe).args(&args).spawn() {
+                Ok(_) => {
+                    // Give the new instance a moment to install its hook before we
+                    // drop ours, so input is never left fully unhooked.
+                    std::thread::sleep(Duration::from_millis(300));
+                    std::process::exit(0);
+                }
+                Err(e) => eprintln!("再起動 failed (spawn): {e}"),
+            }
+        }
+        Err(e) => eprintln!("再起動 failed (current_exe): {e}"),
+    }
+}
+
+/// 設定: open the config file in the OS default handler. The Slint settings GUI
+/// is not yet built (see plan.md Non-Goals / roadmap 12), so for the prototype
+/// this surfaces the JSON config the daemon actually reads.
+fn open_settings() {
+    let path = Path::new("data/config.json");
+    let target = if path.exists() { "data/config.json" } else { "data" };
+    // `cmd /C start "" <target>` opens with the default associated program.
+    if let Err(e) = std::process::Command::new("cmd")
+        .args(["/C", "start", "", target])
+        .spawn()
+    {
+        eprintln!("設定 failed to open {target}: {e}");
     }
 }
 

@@ -1,0 +1,11 @@
+sequential-press layout
+/* Toy sequential for later trie testing. Header for metadata only. ASCII for test. */
+
+[ 
+` | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 | - | = | ¥ | BS
+q | w | e | r | t | y | u | i | o | p | @ | [ | ] | \
+a | s | d | f | g | h | j | k | l | ; | : | ] | Enter
+z | x | c | v | b | n | m | , | . | / | \ | ShiftR
+]
+
+/* No layers for this toy sequential example. */

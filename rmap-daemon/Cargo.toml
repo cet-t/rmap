@@ -1,0 +1,16 @@
+[package]
+name = "rmap-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rmap-daemon"
+path = "src/main.rs"
+
+[dependencies]
+rmap-core = { path = "../rmap-core" }
+anyhow = { workspace = true }
+tray-icon = "0.10"                    # for resident tray (prototype)
+notify = "6"                          # for config/layout hot reload (debounced)
+# For a real icon we could use image crate to load png, but for prototype we synthesize a small RGBA icon in code.

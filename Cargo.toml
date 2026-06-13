@@ -1,0 +1,26 @@
+[workspace]
+members = ["rmap-core", "rmap-daemon", "rmap-config"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "NYSL-0.9982"
+authors = ["rmap contributors"]
+repository = "https://github.com/your-org/rmap" # placeholder
+
+[workspace.dependencies]
+# Core shared deps (add as needed)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+bitflags = "2"
+# Platform specific later
+# For now, keep minimal for Phase 1
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"   # size for daemon <10MiB target

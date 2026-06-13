@@ -1,0 +1,30 @@
+simultaneous-press layout
+/* Minimal SandS-like toy for parser tests.
+   Grid follows the JIS row shape the loader expects:
+     row0: 13 cols (1..0 - ^ ¥)
+     row1: 12 cols (Q..P @ [)
+     row2: 12 cols (A..L ; : ])
+     row3: 11 cols (Z../ \)
+   ASCII content keeps decode + compile simple for the prototype tests
+   (real DvorakJ files are CP932 with kana).
+*/
+
+-option-input[
+  space | -space
+]
+
+[
+1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 | - | ^ | \
+q | w | e | r | t | y | u | i | o | p | @ | [
+a | s | d | f | g | h | j | k | l | ; | : | ]
+z | x | c | v | b | n | m | , | . | / | \
+]
+
+{space}[
+  /* while Space held: shifted layer. Trailing {space} = tap-alone emits Space. */
+  ~ | ! | " | # | $ | % | & | ' | ( | ) | _ | = | |
+  Q | W | E | R | T | Y | U | I | O | P | ` | {
+  A | S | D | F | G | H | J | K | L | + | * | }
+  Z | X | C | V | B | N | M | < | > | ?
+  {space}
+]

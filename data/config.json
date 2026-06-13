@@ -1,0 +1,21 @@
+{
+  "profiles": {
+    "default": {
+      "layout": "data/layouts/samples/toy_simul.txt",
+      "toggles": {
+        "enable_sands": true,
+        "enable_gestures": false,
+        "enable_shortcuts": false
+      }
+    },
+    "colemak": {
+      "layout": "data/layouts/samples/toy_simul.txt",
+      "toggles": { "enable_sands": false }
+    }
+  },
+  "app_map": {
+    "per_app": {},
+    "default_profile": "default"
+  },
+  "default_layout": "data/layouts/samples/toy_simul.txt"
+}

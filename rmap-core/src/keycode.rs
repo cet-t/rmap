@@ -114,6 +114,19 @@ pub enum KeyCode {
     Unknown(u32), // raw platform hint for debugging
 }
 
+/// Physical keyboard layout, as reported by the OS input locale.
+/// Drives which physical row table the DvorakJ grid is compiled against
+/// and how raw VK codes map to [`KeyCode`] on Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyboardLayout {
+    /// JIS 109-key (has dedicated @, ^, ¥, : and \ろ keys).
+    Jis,
+    /// US/ANSI 104-key. Fallback when the OS layout can't be determined
+    /// or isn't Japanese.
+    #[default]
+    Us,
+}
+
 impl KeyCode {
     /// For DvorakJ name table in loader.
     pub fn from_dvorakj_name(name: &str) -> Option<Self> {

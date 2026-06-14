@@ -19,6 +19,8 @@ user/
 
 # Local agent / tooling state
 .claude/
+tasks/
+build.bat
 
 # Build artifacts
 *.exe
@@ -26,3 +28,4 @@ user/
 *.dylib
 *.so
 *.app
+

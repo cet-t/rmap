@@ -301,28 +301,26 @@ impl InputMatcher {
 
         // --- Built-in SandS release (driven by `sands_down`, not the gate, so an
         // in-flight hold completes even if SandS was disabled mid-hold) ---
-        if self.sands_down {
-            if k == self.sands_key {
-                self.pressed.remove(&k);
-                let partnered = self.sands_partnered;
-                let shift_was_injected = self.sands_shift_injected;
-                self.sands_down = false;
-                self.sands_partnered = false;
-                self.sands_shift_injected = false;
-                self.blocked.remove(&k);
-                if !partnered {
-                    return MatchAction::Emit(vec![OutputToken::Key {
-                        code: self.sands_key,
-                        mods: Modifiers::empty(),
-                    }]);
-                }
-                if shift_was_injected {
-                    return MatchAction::Emit(vec![OutputToken::ModUp(KeyCode::ShiftL)]);
-                }
-                return MatchAction::Block;
+        // Content key-ups during a SandS hold pass through (the key-downs
+        // were never eaten — they passed through with synthetic LSHIFT held).
+        if self.sands_down && k == self.sands_key {
+            self.pressed.remove(&k);
+            let partnered = self.sands_partnered;
+            let shift_was_injected = self.sands_shift_injected;
+            self.sands_down = false;
+            self.sands_partnered = false;
+            self.sands_shift_injected = false;
+            self.blocked.remove(&k);
+            if !partnered {
+                return MatchAction::Emit(vec![OutputToken::Key {
+                    code: self.sands_key,
+                    mods: Modifiers::empty(),
+                }]);
             }
-            // Content key-ups during a SandS hold pass through (the key-downs
-            // were never eaten — they passed through with synthetic LSHIFT held).
+            if shift_was_injected {
+                return MatchAction::Emit(vec![OutputToken::ModUp(KeyCode::ShiftL)]);
+            }
+            return MatchAction::Block;
         }
 
         // Evaluate bypass while the key is still "pressed" so e.g. a disable

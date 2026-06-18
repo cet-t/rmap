@@ -10,7 +10,6 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 bitflags = { workspace = true, features = ["serde"] }
-encoding_rs = "0.8"                                   # for Shift-JIS (CP932) DvorakJ layout files
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.52", features = [
@@ -26,4 +25,5 @@ windows = { version = "0.52", features = [
 ] }
 
 [dev-dependencies]
+dvorakj-parser = { path = "../dvorakj-parser" }
 # For tests, criterion later for NFR-1

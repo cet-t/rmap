@@ -6,8 +6,9 @@
 //! chord-trigger keys, actual chords firing, function-key tokens, sustained
 //! SandS layers, and the bypass paths (disable key / suspend / Ctrl).
 
+use dvorakj_parser::DvorakJLayoutLoader;
 use rmap_core::{
-    DvorakJLayoutLoader, LayoutLoader, InputMatcher, MatchAction, Event, EventKind, KeyCode,
+    LayoutLoader, InputMatcher, MatchAction, Event, EventKind, KeyCode,
     Modifiers, OutputToken, SpecialKey,
 };
 

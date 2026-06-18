@@ -1377,6 +1377,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
+name = "dvorakj-parser"
+version = "0.1.1"
+dependencies = [
+ "encoding_rs",
+ "rmap-core",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4632,7 +4640,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "bitflags 2.13.0",
- "encoding_rs",
+ "dvorakj-parser",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4644,6 +4652,7 @@ name = "rmap-daemon"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "dvorakj-parser",
  "notify",
  "rmap-core",
  "tray-icon",

@@ -2,7 +2,7 @@
 //! Follows plan: dedicated thread for hook + message loop, bidirectional KeyCode map,
 //! eat original on remap, pass injected events, low latency decision inside callback.
 
-use crate::{Event, EventKind, KeyCode, KeyboardLayout, Modifiers, OutputSeq, OutputToken, SpecialKey, InputMatcher, MatchAction, layout::Layout, DvorakJLayoutLoader, config::AppConfig, loader::LayoutLoader};
+use crate::{Event, EventKind, KeyCode, KeyboardLayout, Modifiers, OutputSeq, OutputToken, SpecialKey, InputMatcher, MatchAction, layout::Layout, config::AppConfig, loader};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -237,10 +237,9 @@ fn load_optional_layout(path: &str) -> Option<std::sync::Arc<Layout>> {
     if path.is_empty() {
         return None;
     }
-    let loader = DvorakJLayoutLoader::new();
     std::fs::read(path)
         .ok()
-        .and_then(|bytes| loader.load(&bytes, path).ok())
+        .and_then(|bytes| loader::default_loader().load(&bytes, path).ok())
         .map(std::sync::Arc::new)
 }
 
@@ -645,25 +644,31 @@ fn inject_output_seq(seq: &OutputSeq, keyboard: KeyboardLayout) {
 }
 
 fn make_key_input(vk: VIRTUAL_KEY, up: bool) -> INPUT {
-    let mut ki = KEYBDINPUT::default();
-    ki.wVk = vk;
-    if up {
-        ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP.0);
+    let ki = KEYBDINPUT {
+        wVk: vk,
+        dwFlags: if up {
+            KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP.0)
+        } else {
+            KEYBD_EVENT_FLAGS(0)
+        },
+        ..Default::default()
+    };
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki },
     }
-    let mut i = INPUT::default();
-    i.r#type = INPUT_KEYBOARD;
-    i.Anonymous = INPUT_0 { ki };
-    i
 }
 
 fn make_unicode_input(ch: char, up: bool) -> INPUT {
-    let mut ki = KEYBDINPUT::default();
-    ki.wScan = ch as u16;
-    ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE.0 | if up { KEYEVENTF_KEYUP.0 } else { 0 });
-    let mut i = INPUT::default();
-    i.r#type = INPUT_KEYBOARD;
-    i.Anonymous = INPUT_0 { ki };
-    i
+    let ki = KEYBDINPUT {
+        wScan: ch as u16,
+        dwFlags: KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE.0 | if up { KEYEVENTF_KEYUP.0 } else { 0 }),
+        ..Default::default()
+    };
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki },
+    }
 }
 
 fn keycode_to_vk(k: KeyCode, keyboard: KeyboardLayout) -> VIRTUAL_KEY {
@@ -731,24 +736,24 @@ fn keycode_to_char_fallback(k: KeyCode) -> Option<char> {
 /// The physical keyboard layout (JIS vs US) is determined entirely by the
 /// loaded file's name suffix (`.jp.txt` / `.en.txt`), not the OS locale.
 fn load_layout_for_app(app_id: &str, cfg: &AppConfig) -> Layout {
-    let loader = DvorakJLayoutLoader::new();
+    let ldr = loader::default_loader();
     let layout_path = cfg.layout_path_for_app(app_id);
 
     if let Ok(bytes) = std::fs::read(&layout_path) {
-        if let Ok(l) = loader.load(&bytes, &layout_path) {
+        if let Ok(l) = ldr.load(&bytes, &layout_path) {
             return l;
         }
     }
 
     // Fallback to bundled sample (toy_simul supports SandS + tap for live verification)
     if let Ok(bytes) = std::fs::read("data/layouts/samples/toy_simul.txt") {
-        if let Ok(l) = loader.load(&bytes, "toy-sands") {
+        if let Ok(l) = ldr.load(&bytes, "toy-sands") {
             return l;
         }
     }
 
     // Last resort: tiny embedded SandS toy (guarantees runnable prototype even with no data/ dir)
-    loader.load(
+    ldr.load(
         b"simultaneous-press layout\n-option-input[ space | -space ]\n[ q | w | e ]\n{space}[ Q | W | E ]\n{space}\n",
         "embedded",
     ).unwrap_or_else(|_| Layout::default())
@@ -846,7 +851,7 @@ fn get_foreground_app_id() -> String {
             return String::new();
         }
         let path = String::from_utf16_lossy(&buf[..len as usize]);
-        let name = path.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(&path);
+        let name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
         let name = name.to_ascii_lowercase();
         let name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
         if name.is_empty() { String::new() } else { name }

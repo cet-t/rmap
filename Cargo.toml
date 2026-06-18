@@ -1,5 +1,5 @@
 [workspace]
-members = ["rmap-core", "rmap-daemon", "rmap-config"]
+members = ["rmap-core", "dvorakj-parser", "rmap-daemon", "rmap-config"]
 resolver = "2"
 
 [workspace.package]

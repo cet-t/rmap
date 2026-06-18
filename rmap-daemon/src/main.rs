@@ -16,6 +16,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 fn main() -> Result<()> {
+    rmap_core::loader::register_default_loader(Box::new(dvorakj_parser::DvorakJLayoutLoader::new()));
+
     // Load config early so we know whether file logging is enabled (it must
     // be init'd before any log::log() call; install_and_run_windows_hook()
     // also loads AppConfig itself for the hook state, independently).

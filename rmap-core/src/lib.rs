@@ -18,7 +18,7 @@ pub mod profile;
 pub use event::{Event, EventKind};
 pub use keycode::{KeyCode, KeyboardLayout};
 pub use layout::Layout;
-pub use loader::{DvorakJLayoutLoader, LayoutLoader};
+pub use loader::LayoutLoader;
 pub use matcher::{InputMatcher, MatchAction};
 pub use modifiers::Modifiers;
 pub use output::{InputMode, OutputSeq, OutputToken, SpecialKey};

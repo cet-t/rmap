@@ -159,7 +159,12 @@ async fn pick_layout_file_async() -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn load_config_to_window(window: &AppWindow, cfg: &AppConfig) -> Vec<String> {
-    window.set_default_layout(cfg.default_layout.clone().into());
+    let effective_layout = cfg
+        .profiles
+        .get(&cfg.app_map.default_profile)
+        .map(|p| p.layout.clone())
+        .unwrap_or_else(|| cfg.default_layout.clone());
+    window.set_default_layout(effective_layout.into());
     window.set_enable_log(cfg.enable_log);
     window.set_activate_only_when_ime_on(cfg.activate_only_when_ime_on);
     window.set_ime_off_layout(cfg.ime_off_layout.clone().into());
@@ -453,6 +458,9 @@ fn setup_save_callback(
                 p.toggles.enable_gestures = row.gestures;
                 p.toggles.enable_shortcuts = row.shortcuts;
             }
+        }
+        if let Some(p) = base_cfg.profiles.get_mut(&base_cfg.app_map.default_profile) {
+            p.layout = base_cfg.default_layout.clone();
         }
 
         match save_config(&base_cfg) {

@@ -31,3 +31,4 @@ dist/
 *.app
 
 token-optimizer/
+prompt.md

@@ -9,7 +9,7 @@
       }
     },
     "default": {
-      "layout": "data/layouts/圧縮版_新下駄配列.txt",
+      "layout": "D:/.repo/rmap/data/layouts/圧縮版_新下駄配列.txt",
       "toggles": {
         "enable_sands": true,
         "enable_gestures": false,
@@ -21,9 +21,9 @@
     "per_app": {},
     "default_profile": "default"
   },
-  "default_layout": "D:/.repo/rmap/data/layouts/月2-263.txt",
+  "default_layout": "D:/.repo/rmap/data/layouts/圧縮版_新下駄配列.txt",
   "disable_keys": [],
-  "enable_log": false,
+  "enable_log": true,
   "activate_only_when_ime_on": true,
   "ime_off_layout": "",
   "direct_input_key": "shift",
@@ -32,5 +32,6 @@
   "hold_mode": true,
   "enable_sands_ime_on": true,
   "enable_sands_ime_off": true,
-  "dispatch_rate_ms": 5
+  "dispatch_rate_ms": 5,
+  "prefix_window_ms": 300
 }

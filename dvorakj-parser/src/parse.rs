@@ -67,6 +67,49 @@ fn resolve_trigger(trig: &str) -> Result<KeyCode, LoadError> {
     Err(LoadError::UnknownTrigger(trig.to_string()))
 }
 
+/// Resolved trigger from `-option-input`.
+struct TriggerSpec {
+    key: KeyCode,
+    /// The `(` form was present — this name supports simultaneous (combo) routing.
+    has_combo: bool,
+}
+
+/// Parse the right-hand side of `-option-input` trigger declarations.
+///
+/// Handles formats: `-10` (scancode), `[k]` (name ref), `[k], ([k]` (compound),
+/// `[k][y]` (multi-key sequence), `([q]` (paren-only ref).
+/// Returns `None` for multi-key-only entries (no single-key alternative).
+fn resolve_trigger_spec(
+    spec: &str,
+    layer_triggers: &HashMap<String, KeyCode>,
+) -> Result<Option<TriggerSpec>, LoadError> {
+    let has_combo = spec.contains('(');
+    for part in spec.split(',') {
+        let part = part.trim().trim_start_matches('(');
+
+        if part.starts_with('[') {
+            if part.matches('[').count() > 1 {
+                continue;
+            }
+            if let Some(name) = part.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                let name = name.trim();
+                if let Some(&kc) = layer_triggers.get(name) {
+                    return Ok(Some(TriggerSpec { key: kc, has_combo }));
+                }
+            }
+            continue;
+        }
+
+        let trig = part.trim_start_matches('-');
+        if !trig.is_empty() {
+            if let Ok(kc) = resolve_trigger(trig) {
+                return Ok(Some(TriggerSpec { key: kc, has_combo }));
+            }
+        }
+    }
+    Ok(None)
+}
+
 pub(crate) fn parse_dvorakj(
     text: &str,
     id: &str,
@@ -93,6 +136,8 @@ pub(crate) fn parse_dvorakj(
     };
     let mut layer_triggers: HashMap<String, KeyCode> = HashMap::new();
     let mut sustained_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut combo_capable_names: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     layer_triggers.insert("shift".to_string(), KeyCode::ShiftL);
     sustained_names.insert("shift".to_string());
     let mut base_row_count = 0usize;
@@ -122,18 +167,19 @@ pub(crate) fn parse_dvorakj(
                 for bl in body {
                     if let Some((lname, trig_raw)) = bl.split_once('|') {
                         let lname = normalize_layer_name(lname);
-                        let trig = trig_raw.trim().trim_start_matches('-');
-                        let kc = resolve_trigger(trig)?;
-                        layer_triggers.insert(lname.clone(), kc);
-                        // Legacy/Simultaneous: -option-input triggers are sustained (SandS).
-                        // Sequential/Mixed: they are prefix triggers, not sustained.
+                        let Some(spec) = resolve_trigger_spec(trig_raw.trim(), &layer_triggers)?
+                        else {
+                            continue;
+                        };
+                        layer_triggers.insert(lname.clone(), spec.key);
+                        if spec.has_combo {
+                            combo_capable_names.insert(lname.clone());
+                        }
                         match layout.mode {
                             LayoutMode::Legacy | LayoutMode::Simultaneous => {
                                 sustained_names.insert(lname);
                             }
-                            LayoutMode::Sequential | LayoutMode::Mixed => {
-                                // Don't add to sustained_names — will be routed as prefix.
-                            }
+                            LayoutMode::Sequential | LayoutMode::Mixed => {}
                         }
                     }
                 }
@@ -165,10 +211,8 @@ pub(crate) fn parse_dvorakj(
                         }
                     }
                     if !missing.is_empty() {
-                        return Err(LoadError::UnknownTrigger(format!(
-                            "layer name(s) {:?}",
-                            missing
-                        )));
+                        i = end + 1;
+                        continue;
                     }
                     layer_ks.sort_by_key(|k| key_sort(*k));
 
@@ -203,40 +247,10 @@ pub(crate) fn parse_dvorakj(
                     }
 
                     let is_sustained = names.iter().all(|n| sustained_names.contains(n));
-                    let route = determine_route(layout.mode, is_sustained, false);
+                    let is_combo_cap = names.iter().any(|n| combo_capable_names.contains(n));
+                    let route = determine_route(layout.mode, is_sustained, false, is_combo_cap);
 
-                    match route {
-                        BlockRoute::Sustained => {
-                            layout.layer_maps.insert(layer_ks.clone(), grid);
-                            for &k in &layer_ks {
-                                layout.sustained_triggers.insert(k);
-                            }
-                        }
-                        BlockRoute::Combo => {
-                            for (&content, out) in &grid {
-                                let mut chord = layer_ks.clone();
-                                chord.push(content);
-                                rmap_core::layout::canon_sort(&mut chord);
-                                chord.dedup();
-                                layout.combos.entry(chord).or_insert_with(|| out.clone());
-                                layout.combo_keys.insert(content);
-                            }
-                            for &k in &layer_ks {
-                                layout.combo_keys.insert(k);
-                            }
-                            layout.layer_maps.insert(layer_ks.clone(), grid);
-                        }
-                        BlockRoute::Prefix => {
-                            // Each trigger individually activates this layer.
-                            for &k in &layer_ks {
-                                layout
-                                    .prefix_maps
-                                    .entry(vec![k])
-                                    .or_insert_with(|| grid.clone());
-                                layout.prefix_triggers.insert(k);
-                            }
-                        }
-                    }
+                    apply_route(&route, &layer_ks, grid, &mut layout);
                     for k in layer_ks {
                         layout.layer_triggers.insert(k);
                     }
@@ -290,10 +304,8 @@ pub(crate) fn parse_dvorakj(
                     }
                 }
                 if !missing.is_empty() {
-                    return Err(LoadError::UnknownTrigger(format!(
-                        "layer name(s) {:?}",
-                        missing
-                    )));
+                    i = end + 1;
+                    continue;
                 }
                 layer_ks.sort_by_key(|k| key_sort(*k));
 
@@ -328,39 +340,10 @@ pub(crate) fn parse_dvorakj(
                 }
 
                 let is_sustained = names.iter().all(|n| sustained_names.contains(n));
-                let route = determine_route(layout.mode, is_sustained, is_paren);
+                let is_combo_cap = names.iter().any(|n| combo_capable_names.contains(n));
+                let route = determine_route(layout.mode, is_sustained, is_paren, is_combo_cap);
 
-                match route {
-                    BlockRoute::Sustained => {
-                        layout.layer_maps.insert(layer_ks.clone(), grid);
-                        for &k in &layer_ks {
-                            layout.sustained_triggers.insert(k);
-                        }
-                    }
-                    BlockRoute::Combo => {
-                        for (&content, out) in &grid {
-                            let mut chord = layer_ks.clone();
-                            chord.push(content);
-                            rmap_core::layout::canon_sort(&mut chord);
-                            chord.dedup();
-                            layout.combos.entry(chord).or_insert_with(|| out.clone());
-                            layout.combo_keys.insert(content);
-                        }
-                        for &k in &layer_ks {
-                            layout.combo_keys.insert(k);
-                        }
-                        layout.layer_maps.insert(layer_ks.clone(), grid);
-                    }
-                    BlockRoute::Prefix => {
-                        layout.prefix_maps.insert(layer_ks.clone(), grid);
-                        for &k in &layer_ks {
-                            layout.prefix_triggers.insert(k);
-                        }
-                    }
-                }
-                for k in layer_ks {
-                    layout.layer_triggers.insert(k);
-                }
+                apply_route(&route, &layer_ks, grid, &mut layout);
                 i = end + 1;
                 continue;
             }
@@ -376,9 +359,79 @@ enum BlockRoute {
     Sustained,
     Combo,
     Prefix,
+    PrefixAndCombo,
 }
 
-fn determine_route(mode: LayoutMode, is_sustained: bool, is_paren: bool) -> BlockRoute {
+fn apply_route(
+    route: &BlockRoute,
+    layer_ks: &[KeyCode],
+    grid: HashMap<KeyCode, Vec<OutputToken>>,
+    layout: &mut Layout,
+) {
+    match route {
+        BlockRoute::Sustained => {
+            layout.layer_maps.insert(layer_ks.to_vec(), grid);
+            for &k in layer_ks {
+                layout.sustained_triggers.insert(k);
+            }
+        }
+        BlockRoute::Combo => {
+            for (&content, out) in &grid {
+                if layer_ks.contains(&content) {
+                    continue;
+                }
+                let mut chord = layer_ks.to_vec();
+                chord.push(content);
+                rmap_core::layout::canon_sort(&mut chord);
+                layout.combos.entry(chord).or_insert_with(|| out.clone());
+                layout.combo_keys.insert(content);
+            }
+            for &k in layer_ks {
+                layout.combo_keys.insert(k);
+            }
+            layout.layer_maps.insert(layer_ks.to_vec(), grid);
+        }
+        BlockRoute::Prefix => {
+            for &k in layer_ks {
+                layout
+                    .prefix_maps
+                    .entry(vec![k])
+                    .or_insert_with(|| grid.clone());
+                layout.prefix_triggers.insert(k);
+            }
+        }
+        BlockRoute::PrefixAndCombo => {
+            for (&content, out) in &grid {
+                if layer_ks.contains(&content) {
+                    continue;
+                }
+                let mut chord = layer_ks.to_vec();
+                chord.push(content);
+                rmap_core::layout::canon_sort(&mut chord);
+                layout.combos.entry(chord).or_insert_with(|| out.clone());
+                layout.combo_keys.insert(content);
+            }
+            for &k in layer_ks {
+                layout.combo_keys.insert(k);
+                layout
+                    .prefix_maps
+                    .entry(vec![k])
+                    .or_insert_with(|| grid.clone());
+                layout.prefix_triggers.insert(k);
+            }
+        }
+    }
+    for &k in layer_ks {
+        layout.layer_triggers.insert(k);
+    }
+}
+
+fn determine_route(
+    mode: LayoutMode,
+    is_sustained: bool,
+    is_paren: bool,
+    is_combo_capable: bool,
+) -> BlockRoute {
     if is_sustained {
         return BlockRoute::Sustained;
     }
@@ -388,6 +441,8 @@ fn determine_route(mode: LayoutMode, is_sustained: bool, is_paren: bool) -> Bloc
         LayoutMode::Mixed => {
             if is_paren {
                 BlockRoute::Combo
+            } else if is_combo_capable {
+                BlockRoute::PrefixAndCombo
             } else {
                 BlockRoute::Prefix
             }

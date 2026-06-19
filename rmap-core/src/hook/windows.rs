@@ -260,6 +260,9 @@ pub fn install_and_run_windows_hook() -> JoinHandle<()> {
     if app_config.combo_window_ms > 0 {
         matcher.set_combo_window_ms(app_config.combo_window_ms);
     }
+    if app_config.prefix_window_ms > 0 {
+        matcher.set_prefix_window_ms(app_config.prefix_window_ms);
+    }
     matcher.set_hold_mode(app_config.hold_mode);
     let direct_input_keys: HashSet<KeyCode> =
         crate::config::keycodes_from_config_name(&app_config.direct_input_key)
@@ -864,6 +867,9 @@ pub fn reload_layout() {
             st.direct_input_mode = DirectInputMode::from_config_str(&new_cfg.direct_input_mode);
             if new_cfg.combo_window_ms > 0 {
                 st.matcher.set_combo_window_ms(new_cfg.combo_window_ms);
+            }
+            if new_cfg.prefix_window_ms > 0 {
+                st.matcher.set_prefix_window_ms(new_cfg.prefix_window_ms);
             }
             st.matcher.set_hold_mode(new_cfg.hold_mode);
             st.app_config = new_cfg;

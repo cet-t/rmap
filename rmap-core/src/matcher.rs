@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 /// Short enough that ordinary sequential typing (release-before-next) is not
 /// mistaken for a chord, long enough for an intentional co-press.
 const DEFAULT_COMBO_WINDOW_MS: u64 = 40;
+const DEFAULT_PREFIX_WINDOW_MS: u64 = 300;
 
 /// What the hook should do with the current physical event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +131,7 @@ impl Default for InputMatcher {
             sands_shift_injected: false,
             prefix_active: None,
             prefix_since: None,
-            prefix_window: Duration::from_millis(DEFAULT_COMBO_WINDOW_MS),
+            prefix_window: Duration::from_millis(DEFAULT_PREFIX_WINDOW_MS),
         }
     }
 }
@@ -245,27 +246,49 @@ impl InputMatcher {
         }
 
         // --- 順次打鍵 (prefix/sequential) path ---
-        // Post-release prefix window: a prefix trigger was released and we're
-        // waiting for the next content key. Consume it via prefix_maps.
+        // Prefix waits indefinitely for a content key. No timeout.
+        // When a new trigger key arrives while a prefix is active, the old
+        // prefix is flushed (solo tap emitted) and the new key starts fresh.
         if let Some(ref active) = self.prefix_active.clone() {
-            let within = self
-                .prefix_since
-                .map(|t| t.elapsed() <= self.prefix_window)
-                .unwrap_or(false);
-            if within {
-                if let Some(map) = layout.prefix_maps.get(active) {
-                    if let Some(seq) = map.get(&k).cloned() {
-                        self.blocked.insert(k);
-                        self.prefix_active = None;
-                        self.prefix_since = None;
-                        return MatchAction::Emit(seq);
+            if let Some(map) = layout.prefix_maps.get(active) {
+                if let Some(seq) = map.get(&k).cloned() {
+                    self.blocked.insert(k);
+                    for &pk in active {
+                        if layout.prefix_triggers.contains(&pk) {
+                            self.layer_had_partner.insert(pk);
+                        }
                     }
+                    self.prefix_active = None;
+                    return MatchAction::Emit(seq);
                 }
             }
+            // Key not in prefix map — flush old prefix and handle new key.
+            let flush = self.resolve_pending_prefix(layout);
             self.prefix_active = None;
-            self.prefix_since = None;
+
+            let is_new_trigger =
+                layout.combo_keys.contains(&k) || layout.prefix_triggers.contains(&k);
+            if is_new_trigger {
+                self.pending.push(k);
+                self.pending_since = Some(Instant::now());
+                self.blocked.insert(k);
+                if flush.is_empty() {
+                    return MatchAction::Block;
+                } else {
+                    return MatchAction::Emit(flush);
+                }
+            }
+
+            // Non-trigger key while prefix was active: emit flush + solo/pass.
+            let rest = self.resolve_non_trigger_key(k, layout, flush);
+            return rest;
         }
-        if layout.prefix_triggers.contains(&k) {
+
+        // --- 同時打鍵 chord path (before prefix start, so combo keys defer) ---
+        let is_combo_key = layout.combo_keys.contains(&k);
+        let is_prefix_only = layout.prefix_triggers.contains(&k) && !is_combo_key;
+
+        if is_prefix_only {
             let flushed = self.take_pending_output(layout);
             self.blocked.insert(k);
             return match flushed {
@@ -273,7 +296,7 @@ impl InputMatcher {
                 None => MatchAction::Block,
             };
         }
-        if self.any_prefix_held(layout) {
+        if self.any_prefix_held(layout) && !is_combo_key {
             self.mark_prefix_partners(layout);
             let layers = self.active_prefix_layers(layout);
             if let Some(map) = layout.prefix_maps.get(&layers) {
@@ -283,9 +306,6 @@ impl InputMatcher {
                 }
             }
         }
-
-        // --- 同時打鍵 chord path ---
-        let is_combo_key = layout.combo_keys.contains(&k);
 
         if self.pending.is_empty() {
             if is_combo_key {
@@ -314,6 +334,7 @@ impl InputMatcher {
             if let Some(out) = layout.combos.get(&sorted) {
                 if !self.could_extend(&sorted, layout) {
                     let out = out.clone();
+                    self.mark_combo_partners(layout);
                     self.clear_pending();
                     return MatchAction::Emit(out);
                 }
@@ -323,8 +344,7 @@ impl InputMatcher {
 
         // Window passed, or this key can't extend a chord: finalize the old
         // pending chord, then handle this key fresh.
-        let flushed = self.resolve_chord(&self.pending.clone(), layout);
-        self.clear_pending();
+        let flushed = self.resolve_pending_chord(layout);
 
         if is_combo_key {
             // Start a new chord with this key; emit the flushed output, eat this down.
@@ -405,7 +425,9 @@ impl InputMatcher {
         }
 
         // Prefix trigger release: arm the post-release prefix window.
-        if layout.prefix_triggers.contains(&k) {
+        // Skip keys that are in the pending chord — those are handled below
+        // in the pending path (which knows about dual combo+prefix keys).
+        if layout.prefix_triggers.contains(&k) && !self.pending.contains(&k) {
             self.blocked.remove(&k);
             let had_partner = self.layer_had_partner.remove(&k);
             if !had_partner {
@@ -424,8 +446,24 @@ impl InputMatcher {
 
         // Releasing a key that's part of the pending chord finalizes the chord.
         if self.pending.contains(&k) {
-            let out = self.resolve_chord(&self.pending.clone(), layout);
-            self.clear_pending();
+            // Solo combo key that is also a prefix trigger: don't emit solo
+            // output yet — arm the prefix window instead so the next content
+            // key can resolve via prefix_maps.
+            if self.pending.len() == 1 && layout.prefix_triggers.contains(&k) {
+                self.clear_pending();
+                self.blocked.remove(&k);
+                let mut layers = vec![k];
+                for &pk in &self.pressed {
+                    if layout.prefix_triggers.contains(&pk) {
+                        layers.push(pk);
+                    }
+                }
+                canon_sort(&mut layers);
+                self.prefix_active = Some(layers);
+                self.prefix_since = Some(Instant::now());
+                return MatchAction::Block;
+            }
+            let out = self.resolve_pending_chord(layout);
             self.blocked.remove(&k);
             return MatchAction::Emit(out);
         }
@@ -448,27 +486,8 @@ impl InputMatcher {
             return None;
         }
 
-        // Prefix window timeout: emit the trigger's solo tap.
-        if let Some(ref active) = self.prefix_active {
-            let expired = self
-                .prefix_since
-                .map(|t| t.elapsed() >= self.prefix_window)
-                .unwrap_or(true);
-            if expired {
-                let tap = if active.len() == 1 {
-                    layout
-                        .layer_taps
-                        .get(&active[0])
-                        .cloned()
-                        .or_else(|| layout.single_map.get(&active[0]).cloned())
-                } else {
-                    None
-                };
-                self.prefix_active = None;
-                self.prefix_since = None;
-                return tap;
-            }
-        }
+        // Prefix state persists indefinitely — no timeout emission.
+        // Only cleared by a content key or a new trigger key in on_key_down.
 
         let due = self
             .pending_since
@@ -478,12 +497,29 @@ impl InputMatcher {
             return None;
         }
 
+        // Single pending key that is a prefix trigger: transition to prefix
+        // state instead of emitting solo output. The solo tap is deferred
+        // until prefix_window also expires without a content key.
+        if self.pending.len() == 1 && layout.prefix_triggers.contains(&self.pending[0]) {
+            let k = self.pending[0];
+            let mut layers = vec![k];
+            for &pk in &self.pressed {
+                if pk != k && layout.prefix_triggers.contains(&pk) {
+                    layers.push(pk);
+                }
+            }
+            canon_sort(&mut layers);
+            self.prefix_active = Some(layers);
+            self.prefix_since = Some(Instant::now());
+            self.clear_pending();
+            return None;
+        }
+
         // Hold mode: a single timed-out key keeps repeating its resolved
         // output for as long as it's physically held (OS auto-repeat).
         if self.hold_mode && self.pending.len() == 1 {
             let k = self.pending[0];
-            let out = self.resolve_chord(&self.pending.clone(), layout);
-            self.clear_pending();
+            let out = self.resolve_pending_chord(layout);
             if out.is_empty() {
                 return None;
             }
@@ -491,8 +527,7 @@ impl InputMatcher {
             return Some(out);
         }
 
-        let out = self.resolve_chord(&self.pending.clone(), layout);
-        self.clear_pending();
+        let out = self.resolve_pending_chord(layout);
         if out.is_empty() {
             None
         } else {
@@ -500,9 +535,47 @@ impl InputMatcher {
         }
     }
 
-    /// Whether a timer wakeup is needed (a chord or prefix is pending).
+    /// Flush the active prefix: emit its solo tap output.
+    fn resolve_pending_prefix(&self, layout: &Layout) -> OutputSeq {
+        match &self.prefix_active {
+            Some(active) if active.len() == 1 => layout
+                .layer_taps
+                .get(&active[0])
+                .cloned()
+                .or_else(|| layout.single_map.get(&active[0]).cloned())
+                .unwrap_or_default(),
+            _ => vec![],
+        }
+    }
+
+    /// Handle a non-trigger key when prefix was active: emit flush + the
+    /// key's solo mapping (or pass it through).
+    fn resolve_non_trigger_key(
+        &mut self,
+        k: KeyCode,
+        layout: &Layout,
+        mut flush: OutputSeq,
+    ) -> MatchAction {
+        if let Some(mut seq) = layout
+            .single_map
+            .get(&k)
+            .cloned()
+            .or_else(|| layout.layer_taps.get(&k).cloned())
+        {
+            self.blocked.insert(k);
+            flush.append(&mut seq);
+            MatchAction::Emit(flush)
+        } else if flush.is_empty() {
+            MatchAction::PassThrough
+        } else {
+            MatchAction::EmitThenPass(flush)
+        }
+    }
+
+    /// Whether a timer wakeup is needed (chord pending, prefix timeout
+    /// removed so prefix_active does NOT need wakeups).
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty() || self.prefix_active.is_some()
+        !self.pending.is_empty()
     }
 
     // --- chord resolution ---
@@ -594,8 +667,7 @@ impl InputMatcher {
         if self.pending.is_empty() {
             return None;
         }
-        let out = self.resolve_chord(&self.pending.clone(), layout);
-        self.clear_pending();
+        let out = self.resolve_pending_chord(layout);
         if out.is_empty() {
             None
         } else {
@@ -606,6 +678,25 @@ impl InputMatcher {
     fn clear_pending(&mut self) {
         self.pending.clear();
         self.pending_since = None;
+    }
+
+    /// Mark prefix triggers in the pending set as having had a content partner
+    /// (combo resolved), suppressing re-arm on key-up.
+    fn mark_combo_partners(&mut self, layout: &Layout) {
+        for &k in &self.pending {
+            if layout.prefix_triggers.contains(&k) {
+                self.layer_had_partner.insert(k);
+            }
+        }
+    }
+
+    /// Resolve and clear pending chord, marking prefix-trigger keys as
+    /// partnered so their release won't arm a spurious prefix window.
+    fn resolve_pending_chord(&mut self, layout: &Layout) -> OutputSeq {
+        let out = self.resolve_chord(&self.pending.clone(), layout);
+        self.mark_combo_partners(layout);
+        self.clear_pending();
+        out
     }
 
     // --- sustained layer helpers ---
@@ -726,6 +817,11 @@ impl InputMatcher {
     /// Configurable simultaneous-press (chord) detection window.
     pub fn set_combo_window_ms(&mut self, ms: u64) {
         self.combo_window = Duration::from_millis(ms);
+    }
+
+    /// Configurable sequential-input (prefix) detection window.
+    pub fn set_prefix_window_ms(&mut self, ms: u64) {
+        self.prefix_window = Duration::from_millis(ms);
     }
 
     /// Whether a solo key resolved by `flush_due` repeats its output while

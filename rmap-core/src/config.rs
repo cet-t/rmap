@@ -74,6 +74,16 @@ pub struct AppConfig {
     /// higher = fewer wakeups. 0 or unset falls back to the 5ms default.
     #[serde(default = "default_dispatch_rate_ms")]
     pub dispatch_rate_ms: u64,
+    /// Sequential-input (prefix) detection window, in milliseconds. After a
+    /// prefix trigger key's combo window expires without a simultaneous
+    /// partner, the engine waits this long for a follow-up content key before
+    /// falling back to the trigger's solo tap. Default 300ms.
+    #[serde(default = "default_prefix_window_ms")]
+    pub prefix_window_ms: u64,
+}
+
+fn default_prefix_window_ms() -> u64 {
+    300
 }
 
 fn default_true() -> bool {
@@ -163,6 +173,7 @@ impl AppConfig {
             enable_sands_ime_on: true,
             enable_sands_ime_off: true,
             dispatch_rate_ms: default_dispatch_rate_ms(),
+            prefix_window_ms: default_prefix_window_ms(),
         }
     }
 

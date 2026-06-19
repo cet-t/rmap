@@ -202,9 +202,33 @@ impl AppConfig {
             .per_app
             .get(app_id)
             .unwrap_or(&self.app_map.default_profile);
-        self.profiles
+        let raw = self
+            .profiles
             .get(prof_id)
             .map(|p| p.layout.clone())
-            .unwrap_or_else(|| self.default_layout.clone())
+            .unwrap_or_else(|| self.default_layout.clone());
+        resolve_layout_path(&raw)
     }
+}
+
+/// Resolve a layout path from config to an actual filesystem path.
+/// Handles relative paths by trying: as-is → prepend "data/" → as-is from exe dir.
+pub fn resolve_layout_path(raw: &str) -> String {
+    use std::path::Path;
+    let p = Path::new(raw);
+    // Absolute path: use as-is
+    if p.is_absolute() {
+        return raw.to_string();
+    }
+    // Try as-is (relative to cwd)
+    if p.exists() {
+        return raw.to_string();
+    }
+    // Try prepending "data/" (config is in data/, layouts are in data/layouts/)
+    let with_prefix = format!("data/{}", raw);
+    if Path::new(&with_prefix).exists() {
+        return with_prefix;
+    }
+    // Return raw as-is (fallback will handle missing file)
+    raw.to_string()
 }

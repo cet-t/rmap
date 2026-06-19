@@ -1,15 +1,15 @@
 {
   "profiles": {
-    "colemak": {
-      "layout": "data/layouts/samples/toy_simul.en.txt",
+    "default": {
+      "layout": "D:/.repo/rmap/data/layouts/圧縮版_新下駄配列.txt",
       "toggles": {
         "enable_sands": true,
         "enable_gestures": false,
         "enable_shortcuts": false
       }
     },
-    "default": {
-      "layout": "D:/.repo/rmap/data/layouts/圧縮版_新下駄配列.txt",
+    "colemak": {
+      "layout": "data/layouts/samples/toy_simul.en.txt",
       "toggles": {
         "enable_sands": true,
         "enable_gestures": false,

@@ -237,9 +237,10 @@ fn load_optional_layout(path: &str) -> Option<std::sync::Arc<Layout>> {
     if path.is_empty() {
         return None;
     }
-    std::fs::read(path)
+    let resolved = crate::config::resolve_layout_path(path);
+    std::fs::read(&resolved)
         .ok()
-        .and_then(|bytes| loader::default_loader().load(&bytes, path).ok())
+        .and_then(|bytes| loader::default_loader().load(&bytes, &resolved).ok())
         .map(std::sync::Arc::new)
 }
 

@@ -2,26 +2,34 @@
 //! rmap-daemon: resident remapper. Owns hooks, applies layouts, IPC server, tray.
 
 use anyhow::Result;
+use notify::event::EventKind;
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use rmap_core::config::AppConfig;
-use rmap_core::hook::{install_and_run_windows_hook, reload_layout, set_suspend, toggle_suspend, is_suspended};
+use rmap_core::hook::{
+    install_and_run_windows_hook, is_suspended, reload_layout, set_suspend, toggle_suspend,
+};
 use rmap_core::ipc::start_ipc_server;
 use rmap_core::log;
 use std::path::Path;
 use std::time::Duration;
-use tray_icon::{TrayIconBuilder, menu::{Menu, MenuItem, PredefinedMenuItem, MenuEvent}};
-use notify::{Watcher, RecursiveMode, RecommendedWatcher};
-use notify::event::EventKind;
+use tray_icon::{
+    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    TrayIconBuilder,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    PeekMessageW, TranslateMessage, DispatchMessageW, MSG, PM_REMOVE,
+    DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
 };
 
 fn main() -> Result<()> {
-    rmap_core::loader::register_default_loader(Box::new(dvorakj_parser::DvorakJLayoutLoader::new()));
+    rmap_core::loader::register_default_loader(
+        Box::new(dvorakj_parser::DvorakJLayoutLoader::new()),
+    );
 
     // Load config early so we know whether file logging is enabled (it must
     // be init'd before any log::log() call; install_and_run_windows_hook()
     // also loads AppConfig itself for the hook state, independently).
-    let startup_cfg = AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
+    let startup_cfg =
+        AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
     log::init(startup_cfg.enable_log);
     log::log("daemon starting");
 
@@ -46,7 +54,7 @@ fn main() -> Result<()> {
     let mut suspended = is_suspended();
     let toggle_item = MenuItem::new(if suspended { "再生" } else { "停止" }, true, None);
     let restart_item = MenuItem::new("再起動", true, None); // re-exec the daemon
-    let settings_item = MenuItem::new("設定", true, None);  // open config.json in default app
+    let settings_item = MenuItem::new("設定", true, None); // open config.json in default app
     let quit_item = MenuItem::new("終了", true, None);
     tray_menu.append(&toggle_item).ok();
     tray_menu.append(&restart_item).ok();
@@ -79,13 +87,11 @@ fn main() -> Result<()> {
                 reload_layout();
                 rmap_core::ipc::IpcResponse::Ok
             }
-            rmap_core::ipc::IpcCommand::Status => {
-                rmap_core::ipc::IpcResponse::Status {
-                    version: env!("CARGO_PKG_VERSION").into(),
-                    active_app: String::new(),
-                    suspended: is_suspended(),
-                }
-            }
+            rmap_core::ipc::IpcCommand::Status => rmap_core::ipc::IpcResponse::Status {
+                version: env!("CARGO_PKG_VERSION").into(),
+                active_app: String::new(),
+                suspended: is_suspended(),
+            },
             rmap_core::ipc::IpcCommand::Quit => {
                 rmap_core::notify!("IPC: quit requested");
                 // Exit on its own thread after a short delay so the IPC
@@ -109,7 +115,10 @@ fn main() -> Result<()> {
             }
             rmap_core::ipc::IpcCommand::ToggleRunning => {
                 let now = toggle_suspend();
-                rmap_core::notify!("IPC: toggle running -> {}", if now { "stopped" } else { "running" });
+                rmap_core::notify!(
+                    "IPC: toggle running -> {}",
+                    if now { "stopped" } else { "running" }
+                );
                 rmap_core::ipc::IpcResponse::Ok
             }
             rmap_core::ipc::IpcCommand::Restart => {
@@ -154,7 +163,10 @@ fn main() -> Result<()> {
 
         // Watcher (debounced events come as batches)
         if let Ok(Ok(evt)) = rx.try_recv() {
-            if matches!(evt.kind, EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)) {
+            if matches!(
+                evt.kind,
+                EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+            ) {
                 // Only care about .txt or config.json changes
                 let relevant = evt.paths.iter().any(|p| {
                     let s = p.to_string_lossy();
@@ -227,17 +239,26 @@ fn open_settings() {
         if exe.exists() {
             match std::process::Command::new(exe).spawn() {
                 Ok(_) => log::log(format!("settings: launched {}", exe.display())),
-                Err(e) => rmap_core::notify_err!("settings: failed to launch {}: {e}", exe.display()),
+                Err(e) => {
+                    rmap_core::notify_err!("settings: failed to launch {}: {e}", exe.display())
+                }
             }
             return;
         }
-        log::log(format!("settings: {} not found, falling back to file open", exe.display()));
+        log::log(format!(
+            "settings: {} not found, falling back to file open",
+            exe.display()
+        ));
     } else {
         log::log("settings: could not determine current_exe, falling back to file open");
     }
 
     let path = Path::new("data/config.json");
-    let target = if path.exists() { "data/config.json" } else { "data" };
+    let target = if path.exists() {
+        "data/config.json"
+    } else {
+        "data"
+    };
     // `cmd /C start "" <target>` opens with the default associated program.
     if let Err(e) = std::process::Command::new("cmd")
         .args(["/C", "start", "", target])
@@ -254,7 +275,7 @@ fn create_simple_icon() -> tray_icon::Icon {
     for y in 0..16 {
         for x in 0..16 {
             let i = (y * 16 + x) * 4;
-            rgba[i] = 30;     // R
+            rgba[i] = 30; // R
             rgba[i + 1] = 30; // G
             rgba[i + 2] = 40; // B
             rgba[i + 3] = 255; // A

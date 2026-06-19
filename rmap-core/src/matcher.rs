@@ -17,7 +17,10 @@
 //! the classic *sustained* while-held layer behaviour (SandS), so that path is
 //! preserved for those layouts.
 
-use crate::{Event, EventKind, KeyCode, Modifiers, OutputSeq, OutputToken, layout::{Layout, canon_sort}};
+use crate::{
+    layout::{canon_sort, Layout},
+    Event, EventKind, KeyCode, Modifiers, OutputSeq, OutputToken,
+};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -98,6 +101,12 @@ pub struct InputMatcher {
     /// injected). Keeping LSHIFT held across multiple content keys lets
     /// Shift-modified operations (e.g. Shift+Arrow selection) work continuously.
     sands_shift_injected: bool,
+    /// 順次打鍵 (prefix/sequential) state: armed after a prefix trigger is
+    /// released without a content partner. The next content key within the
+    /// window resolves via `prefix_maps`.
+    prefix_active: Option<Vec<KeyCode>>,
+    prefix_since: Option<Instant>,
+    prefix_window: Duration,
 }
 
 impl Default for InputMatcher {
@@ -119,6 +128,9 @@ impl Default for InputMatcher {
             sands_down: false,
             sands_partnered: false,
             sands_shift_injected: false,
+            prefix_active: None,
+            prefix_since: None,
+            prefix_window: Duration::from_millis(DEFAULT_COMBO_WINDOW_MS),
         }
     }
 }
@@ -230,6 +242,46 @@ impl InputMatcher {
                 return MatchAction::Emit(seq);
             }
             return MatchAction::PassThrough;
+        }
+
+        // --- 順次打鍵 (prefix/sequential) path ---
+        // Post-release prefix window: a prefix trigger was released and we're
+        // waiting for the next content key. Consume it via prefix_maps.
+        if let Some(ref active) = self.prefix_active.clone() {
+            let within = self
+                .prefix_since
+                .map(|t| t.elapsed() <= self.prefix_window)
+                .unwrap_or(false);
+            if within {
+                if let Some(map) = layout.prefix_maps.get(active) {
+                    if let Some(seq) = map.get(&k).cloned() {
+                        self.blocked.insert(k);
+                        self.prefix_active = None;
+                        self.prefix_since = None;
+                        return MatchAction::Emit(seq);
+                    }
+                }
+            }
+            self.prefix_active = None;
+            self.prefix_since = None;
+        }
+        if layout.prefix_triggers.contains(&k) {
+            let flushed = self.take_pending_output(layout);
+            self.blocked.insert(k);
+            return match flushed {
+                Some(seq) => MatchAction::Emit(seq),
+                None => MatchAction::Block,
+            };
+        }
+        if self.any_prefix_held(layout) {
+            self.mark_prefix_partners(layout);
+            let layers = self.active_prefix_layers(layout);
+            if let Some(map) = layout.prefix_maps.get(&layers) {
+                if let Some(seq) = map.get(&k).cloned() {
+                    self.blocked.insert(k);
+                    return MatchAction::Emit(seq);
+                }
+            }
         }
 
         // --- 同時打鍵 chord path ---
@@ -352,6 +404,24 @@ impl InputMatcher {
             return MatchAction::Block;
         }
 
+        // Prefix trigger release: arm the post-release prefix window.
+        if layout.prefix_triggers.contains(&k) {
+            self.blocked.remove(&k);
+            let had_partner = self.layer_had_partner.remove(&k);
+            if !had_partner {
+                let mut layers = vec![k];
+                for &pk in &self.pressed {
+                    if layout.prefix_triggers.contains(&pk) {
+                        layers.push(pk);
+                    }
+                }
+                canon_sort(&mut layers);
+                self.prefix_active = Some(layers);
+                self.prefix_since = Some(Instant::now());
+            }
+            return MatchAction::Block;
+        }
+
         // Releasing a key that's part of the pending chord finalizes the chord.
         if self.pending.contains(&k) {
             let out = self.resolve_chord(&self.pending.clone(), layout);
@@ -377,6 +447,29 @@ impl InputMatcher {
         if self.bypass_active() {
             return None;
         }
+
+        // Prefix window timeout: emit the trigger's solo tap.
+        if let Some(ref active) = self.prefix_active {
+            let expired = self
+                .prefix_since
+                .map(|t| t.elapsed() >= self.prefix_window)
+                .unwrap_or(true);
+            if expired {
+                let tap = if active.len() == 1 {
+                    layout
+                        .layer_taps
+                        .get(&active[0])
+                        .cloned()
+                        .or_else(|| layout.single_map.get(&active[0]).cloned())
+                } else {
+                    None
+                };
+                self.prefix_active = None;
+                self.prefix_since = None;
+                return tap;
+            }
+        }
+
         let due = self
             .pending_since
             .map(|t| t.elapsed() >= self.combo_window)
@@ -400,12 +493,16 @@ impl InputMatcher {
 
         let out = self.resolve_chord(&self.pending.clone(), layout);
         self.clear_pending();
-        if out.is_empty() { None } else { Some(out) }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 
-    /// Whether a timer wakeup is needed (a chord is pending).
+    /// Whether a timer wakeup is needed (a chord or prefix is pending).
     pub fn has_pending(&self) -> bool {
-        !self.pending.is_empty()
+        !self.pending.is_empty() || self.prefix_active.is_some()
     }
 
     // --- chord resolution ---
@@ -452,9 +549,10 @@ impl InputMatcher {
     /// True if some combo strictly contains this key set (so it could still be
     /// completed by another key — don't early-resolve yet).
     fn could_extend(&self, sorted_pending: &[KeyCode], layout: &Layout) -> bool {
-        layout.combos.keys().any(|c| {
-            c.len() > sorted_pending.len() && sorted_pending.iter().all(|k| c.contains(k))
-        })
+        layout
+            .combos
+            .keys()
+            .any(|c| c.len() > sorted_pending.len() && sorted_pending.iter().all(|k| c.contains(k)))
     }
 
     /// Solo output for a key: base mapping, else declared tap, else the key
@@ -465,7 +563,12 @@ impl InputMatcher {
             .get(&k)
             .cloned()
             .or_else(|| layout.layer_taps.get(&k).cloned())
-            .unwrap_or_else(|| vec![crate::OutputToken::Key { code: k, mods: crate::Modifiers::empty() }])
+            .unwrap_or_else(|| {
+                vec![crate::OutputToken::Key {
+                    code: k,
+                    mods: crate::Modifiers::empty(),
+                }]
+            })
     }
 
     /// Emit a non-combo key's mapped output immediately, or pass it through.
@@ -493,7 +596,11 @@ impl InputMatcher {
         }
         let out = self.resolve_chord(&self.pending.clone(), layout);
         self.clear_pending();
-        if out.is_empty() { None } else { Some(out) }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 
     fn clear_pending(&mut self) {
@@ -516,6 +623,7 @@ impl InputMatcher {
             && !self.any_disable_key_held()
             && !self.shortcut_modifier_held()
             && !layout.sustained_triggers.contains(&self.sands_key)
+            && !layout.prefix_triggers.contains(&self.sands_key)
     }
 
     /// Whether `k` is a SandS sustained while-held layer trigger right now
@@ -525,7 +633,9 @@ impl InputMatcher {
     }
 
     fn any_sustained_held(&self, layout: &Layout) -> bool {
-        self.pressed.iter().any(|k| self.is_sustained_trigger(*k, layout))
+        self.pressed
+            .iter()
+            .any(|k| self.is_sustained_trigger(*k, layout))
     }
 
     fn active_sustained_layers(&self, layout: &Layout) -> Vec<KeyCode> {
@@ -542,6 +652,33 @@ impl InputMatcher {
     fn mark_sustained_partners(&mut self, layout: &Layout) {
         for k in self.pressed.iter().copied().collect::<Vec<_>>() {
             if self.is_sustained_trigger(k, layout) {
+                self.layer_had_partner.insert(k);
+            }
+        }
+    }
+
+    // --- prefix (sequential) layer helpers ---
+
+    fn any_prefix_held(&self, layout: &Layout) -> bool {
+        self.pressed
+            .iter()
+            .any(|k| layout.prefix_triggers.contains(k))
+    }
+
+    fn active_prefix_layers(&self, layout: &Layout) -> Vec<KeyCode> {
+        let mut v: Vec<KeyCode> = self
+            .pressed
+            .iter()
+            .copied()
+            .filter(|k| layout.prefix_triggers.contains(k))
+            .collect();
+        canon_sort(&mut v);
+        v
+    }
+
+    fn mark_prefix_partners(&mut self, layout: &Layout) {
+        for k in self.pressed.iter().copied().collect::<Vec<_>>() {
+            if layout.prefix_triggers.contains(&k) {
                 self.layer_had_partner.insert(k);
             }
         }
@@ -623,6 +760,8 @@ impl InputMatcher {
         self.sands_down = false;
         self.sands_partnered = false;
         self.sands_shift_injected = false;
+        self.prefix_active = None;
+        self.prefix_since = None;
         self.clear_pending();
     }
 

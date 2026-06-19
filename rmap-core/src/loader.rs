@@ -34,5 +34,8 @@ pub fn register_default_loader(loader: Box<dyn LayoutLoader>) {
 }
 
 pub fn default_loader() -> &'static dyn LayoutLoader {
-    DEFAULT_LOADER.get().expect("loader must be registered before use").as_ref()
+    DEFAULT_LOADER
+        .get()
+        .expect("loader must be registered before use")
+        .as_ref()
 }

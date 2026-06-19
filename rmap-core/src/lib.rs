@@ -17,7 +17,7 @@ pub mod profile;
 // Re-exports for convenience
 pub use event::{Event, EventKind};
 pub use keycode::{KeyCode, KeyboardLayout};
-pub use layout::Layout;
+pub use layout::{Layout, LayoutMode};
 pub use loader::LayoutLoader;
 pub use matcher::{InputMatcher, MatchAction};
 pub use modifiers::Modifiers;

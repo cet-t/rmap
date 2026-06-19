@@ -16,8 +16,8 @@ use windows::Win32::Storage::FileSystem::{
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
 };
 use windows::Win32::System::Pipes::{
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe,
-    PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_MESSAGE,
+    PIPE_TYPE_MESSAGE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
 
 const PIPE_NAME: &str = r"\\.\pipe\rmap";
@@ -37,7 +37,9 @@ where
         match create_server_pipe() {
             Ok(pipe) => {
                 if !wait_for_client(pipe) {
-                    unsafe { let _ = CloseHandle(pipe); }
+                    unsafe {
+                        let _ = CloseHandle(pipe);
+                    }
                     continue;
                 }
                 if let Some(cmd) = read_message(pipe) {
@@ -45,7 +47,9 @@ where
                     let _ = write_message(pipe, &resp);
                     // Block until the client has read the response; otherwise
                     // DisconnectNamedPipe below can discard unread data.
-                    unsafe { let _ = FlushFileBuffers(pipe); }
+                    unsafe {
+                        let _ = FlushFileBuffers(pipe);
+                    }
                 }
                 unsafe {
                     let _ = DisconnectNamedPipe(pipe);
@@ -144,8 +148,10 @@ pub fn send_command(cmd: &IpcCommand) -> anyhow::Result<IpcResponse> {
                 }
                 Err(e)
                     if attempt < 39
-                        && (e.code() == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
-                            || e.code() == windows::core::HRESULT::from_win32(ERROR_PIPE_BUSY.0)) =>
+                        && (e.code()
+                            == windows::core::HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0)
+                            || e.code()
+                                == windows::core::HRESULT::from_win32(ERROR_PIPE_BUSY.0)) =>
                 {
                     std::thread::sleep(Duration::from_millis(50));
                 }
@@ -156,14 +162,18 @@ pub fn send_command(cmd: &IpcCommand) -> anyhow::Result<IpcResponse> {
         let body = serde_json::to_vec(cmd)?;
         let len = (body.len() as u32).to_le_bytes();
         let write_result = (|| -> anyhow::Result<IpcResponse> {
-            WriteFile(pipe, Some(&len), None, None).map_err(|e| anyhow::anyhow!("write len: {e}"))?;
-            WriteFile(pipe, Some(&body), None, None).map_err(|e| anyhow::anyhow!("write body: {e}"))?;
+            WriteFile(pipe, Some(&len), None, None)
+                .map_err(|e| anyhow::anyhow!("write len: {e}"))?;
+            WriteFile(pipe, Some(&body), None, None)
+                .map_err(|e| anyhow::anyhow!("write body: {e}"))?;
 
             let mut resp_len_buf = [0u8; 4];
-            ReadFile(pipe, Some(&mut resp_len_buf), None, None).map_err(|e| anyhow::anyhow!("read resp len: {e}"))?;
+            ReadFile(pipe, Some(&mut resp_len_buf), None, None)
+                .map_err(|e| anyhow::anyhow!("read resp len: {e}"))?;
             let resp_len = u32::from_le_bytes(resp_len_buf) as usize;
             let mut resp_buf = vec![0u8; resp_len];
-            ReadFile(pipe, Some(&mut resp_buf), None, None).map_err(|e| anyhow::anyhow!("read resp body: {e}"))?;
+            ReadFile(pipe, Some(&mut resp_buf), None, None)
+                .map_err(|e| anyhow::anyhow!("read resp body: {e}"))?;
             Ok(serde_json::from_slice(&resp_buf)?)
         })();
 
@@ -209,7 +219,9 @@ mod tests {
         ] {
             let resp = send_command(&cmd).expect("send_command");
             assert!(matches!(resp, IpcResponse::Ok));
-            let got = rx.recv_timeout(Duration::from_secs(2)).expect("server received cmd");
+            let got = rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("server received cmd");
             assert!(matches!(got, ref g if format!("{g:?}") == format!("{cmd:?}")));
         }
 

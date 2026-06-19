@@ -43,10 +43,55 @@ pub(crate) fn extract_block(lines: &[&str], mut idx: usize) -> Option<(Vec<Strin
     Some((body, idx))
 }
 
+/// Like `extract_block` but starts extraction from the LAST `[` on the opener
+/// line. Used for bracket-named blocks like `[d],[k][...]` where the header
+/// has bracket-enclosed names before the grid's opening `[`.
+pub(crate) fn extract_block_from_last_bracket(
+    lines: &[&str],
+    idx: usize,
+) -> Option<(Vec<String>, usize)> {
+    if idx >= lines.len() {
+        return None;
+    }
+    let opener = lines[idx];
+    let last_open = opener.rfind('[')?;
+    let after = &opener[last_open + 1..];
+
+    let mut body = vec![];
+    if let Some(close) = after.rfind(']') {
+        let inner = after[..close].trim();
+        if !inner.is_empty() {
+            body.push(inner.to_string());
+        }
+        return Some((body, idx));
+    }
+    let t = after.trim();
+    if !t.is_empty() {
+        body.push(t.to_string());
+    }
+    let mut idx = idx + 1;
+    while idx < lines.len() {
+        let t = lines[idx].trim();
+        if t == "]" || (t.ends_with(']') && !t.contains('|')) {
+            let before = t.trim_end_matches(']').trim();
+            if !before.is_empty() {
+                body.push(before.to_string());
+            }
+            return Some((body, idx));
+        }
+        if !t.is_empty() {
+            body.push(t.to_string());
+        }
+        idx += 1;
+    }
+    Some((body, idx))
+}
+
 pub(crate) fn normalize_layer_name(raw: &str) -> String {
     let t = raw.trim();
     t.strip_prefix('{')
         .and_then(|s| s.strip_suffix('}'))
+        .or_else(|| t.strip_prefix('[').and_then(|s| s.strip_suffix(']')))
         .unwrap_or(t)
         .trim()
         .to_string()

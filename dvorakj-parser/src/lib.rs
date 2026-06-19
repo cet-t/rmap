@@ -11,12 +11,12 @@ mod grid;
 mod keymap;
 mod parse;
 
-use rmap_core::{
-    KeyboardLayout,
-    layout::Layout,
-    loader::{LoadError, LayoutLoader},
-};
 use cell::KanaEncoder;
+use rmap_core::{
+    layout::Layout,
+    loader::{LayoutLoader, LoadError},
+    KeyboardLayout,
+};
 
 pub struct DvorakJLayoutLoader {
     kana_encoder: KanaEncoder,
@@ -37,13 +37,21 @@ impl Default for DvorakJLayoutLoader {
 }
 
 impl LayoutLoader for DvorakJLayoutLoader {
-    fn format_name(&self) -> &'static str { "dvorakj" }
+    fn format_name(&self) -> &'static str {
+        "dvorakj"
+    }
 
     fn load(&self, bytes: &[u8], id: &str) -> Result<Layout, LoadError> {
         let (keyboard, text) = if id.ends_with(".en.txt") {
-            (KeyboardLayout::Us, String::from_utf8_lossy(bytes).into_owned())
+            (
+                KeyboardLayout::Us,
+                String::from_utf8_lossy(bytes).into_owned(),
+            )
         } else if id.ends_with(".jp.txt") {
-            (KeyboardLayout::Jis, encoding_rs::SHIFT_JIS.decode(bytes).0.into_owned())
+            (
+                KeyboardLayout::Jis,
+                encoding_rs::SHIFT_JIS.decode(bytes).0.into_owned(),
+            )
         } else {
             let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
             let text = match std::str::from_utf8(bytes) {

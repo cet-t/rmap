@@ -37,7 +37,7 @@ pub type OutputSeq = Vec<OutputToken>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputMode {
     #[default]
-    Direct,  // ASCII/Dvorak/Colemak etc. 1:1 key+mod
-    Romaji,  // kana strings -> romaji keystrokes via bundled encoder
-    Kana,    // kana strings -> JIS-kana key positions
+    Direct, // ASCII/Dvorak/Colemak etc. 1:1 key+mod
+    Romaji, // kana strings -> romaji keystrokes via bundled encoder
+    Kana,   // kana strings -> JIS-kana key positions
 }

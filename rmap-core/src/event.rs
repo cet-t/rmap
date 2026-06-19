@@ -15,7 +15,7 @@ pub struct Event {
     pub kind: EventKind,
     pub code: KeyCode,
     pub modifiers: Modifiers,
-    pub timestamp: u64,  // ms since epoch, for combo window
+    pub timestamp: u64, // ms since epoch, for combo window
     /// true if this is continuation of a hold (key already in pressed set)
     pub held: bool,
 }

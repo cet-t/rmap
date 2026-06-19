@@ -2,32 +2,32 @@
 //! Follows plan: dedicated thread for hook + message loop, bidirectional KeyCode map,
 //! eat original on remap, pass injected events, low latency decision inside callback.
 
-use crate::{Event, EventKind, KeyCode, KeyboardLayout, Modifiers, OutputSeq, OutputToken, SpecialKey, InputMatcher, MatchAction, layout::Layout, config::AppConfig, loader};
+use crate::{
+    config::AppConfig, layout::Layout, loader, Event, EventKind, InputMatcher, KeyCode,
+    KeyboardLayout, MatchAction, Modifiers, OutputSeq, OutputToken, SpecialKey,
+};
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::{self, JoinHandle};
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM, HANDLE, CloseHandle};
 use windows::core::PWSTR;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, KBDLLHOOKSTRUCT,
-    MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP, LLKHF_INJECTED,
-    GetForegroundWindow, GetWindowThreadProcessId,
-};
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    VIRTUAL_KEY,
-    VK_LSHIFT, VK_RSHIFT, VK_LCONTROL, VK_RCONTROL, VK_LMENU, VK_RMENU,
-    VK_LWIN, VK_RWIN,
-    VK_SPACE, VK_RETURN, VK_TAB, VK_BACK, VK_ESCAPE, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN,
-    VK_CAPITAL, VK_CONVERT, VK_NONCONVERT, VK_KANA, VK_KANJI,
-};
+use windows::Win32::Foundation::{CloseHandle, HANDLE, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::Ime::ImmGetDefaultIMEWnd;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    KEYEVENTF_UNICODE, VIRTUAL_KEY, VK_BACK, VK_CAPITAL, VK_CONVERT, VK_DOWN, VK_ESCAPE, VK_KANA,
+    VK_KANJI, VK_LCONTROL, VK_LEFT, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_NONCONVERT, VK_RCONTROL,
+    VK_RETURN, VK_RIGHT, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SPACE, VK_TAB, VK_UP,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, SetWindowsHookExW,
+    UnhookWindowsHookEx, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN,
+    WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, SMTO_ABORTIFHUNG};
 
 static HOOK_STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
@@ -246,8 +246,8 @@ fn load_optional_layout(path: &str) -> Option<std::sync::Arc<Layout>> {
 pub fn install_and_run_windows_hook() -> JoinHandle<()> {
     // Load config (or fallback), resolve initial app + its layout.
     // Supports FR-3 per-app profile (app_map) from day one of prototype.
-    let app_config = AppConfig::load(Path::new("data/config.json"))
-        .unwrap_or_else(|_| AppConfig::fallback());
+    let app_config =
+        AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
     IME_GATING.store(app_config.activate_only_when_ime_on, Ordering::Relaxed);
     DISPATCH_RATE_MS.store(app_config.dispatch_rate_ms.max(1), Ordering::Relaxed);
     let initial_app = get_foreground_app_id();
@@ -262,7 +262,9 @@ pub fn install_and_run_windows_hook() -> JoinHandle<()> {
     }
     matcher.set_hold_mode(app_config.hold_mode);
     let direct_input_keys: HashSet<KeyCode> =
-        crate::config::keycodes_from_config_name(&app_config.direct_input_key).into_iter().collect();
+        crate::config::keycodes_from_config_name(&app_config.direct_input_key)
+            .into_iter()
+            .collect();
     let direct_input_mode = DirectInputMode::from_config_str(&app_config.direct_input_mode);
 
     let layout = normal_layout.clone();
@@ -428,9 +430,7 @@ unsafe extern "system" fn low_level_proc(n_code: i32, w_param: WPARAM, l_param: 
         // `direct_input_mode` — even "off" gives raw bypass so that e.g.
         // Shift+letter always produces the physical key.
         // Toggle only on the real down/up edge (ignore OS auto-repeat).
-        if !st.direct_input_keys.is_empty()
-            && st.direct_input_keys.contains(&code)
-        {
+        if !st.direct_input_keys.is_empty() && st.direct_input_keys.contains(&code) {
             if is_down && !held {
                 st.direct_input_active = true;
                 recompute_layout_locked(&mut st);
@@ -441,7 +441,11 @@ unsafe extern "system" fn low_level_proc(n_code: i32, w_param: WPARAM, l_param: 
         }
 
         let ev = Event {
-            kind: if is_down { EventKind::KeyDown } else { EventKind::KeyUp },
+            kind: if is_down {
+                EventKind::KeyDown
+            } else {
+                EventKind::KeyUp
+            },
             code,
             modifiers: mods,
             timestamp: kbd.time as u64,
@@ -473,7 +477,11 @@ unsafe extern "system" fn low_level_proc(n_code: i32, w_param: WPARAM, l_param: 
 }
 
 // NFR-4 last-resort guard: never panic the hook thread / system hook.
-unsafe extern "system" fn guarded_low_level_proc(n_code: i32, w_param: WPARAM, l_param: LPARAM) -> LRESULT {
+unsafe extern "system" fn guarded_low_level_proc(
+    n_code: i32,
+    w_param: WPARAM,
+    l_param: LPARAM,
+) -> LRESULT {
     let res = std::panic::catch_unwind(|| unsafe { low_level_proc(n_code, w_param, l_param) });
     res.unwrap_or_else(|_| {
         // In production log the panic; for prototype just pass the original event through.
@@ -493,29 +501,61 @@ fn vk_to_keycode(vk: u32, _extended: bool, keyboard: KeyboardLayout) -> KeyCode 
     // than on a US/ANSI keyboard (@, ^, ¥ and the extra \(ろ) key).
     if keyboard == KeyboardLayout::Jis {
         match vk as i32 {
-            0xC0 => return KeyCode::AtSign,   // JIS "@" key (US: Grave)
-            0xDE => return KeyCode::Colon,    // JIS ":" key (US: Quote)
-            0xDC => return KeyCode::Yen,      // JIS "¥" key (US: Backslash)
-            0xBB => return KeyCode::Caret,    // JIS "^" key (US: Equal)
+            0xC0 => return KeyCode::AtSign,    // JIS "@" key (US: Grave)
+            0xDE => return KeyCode::Colon,     // JIS ":" key (US: Quote)
+            0xDC => return KeyCode::Yen,       // JIS "¥" key (US: Backslash)
+            0xBB => return KeyCode::Caret,     // JIS "^" key (US: Equal)
             0xE2 => return KeyCode::Backslash, // JIS "\ろ" key (no US equivalent)
             _ => {}
         }
     }
     match vk as i32 {
-        0x41 => KeyCode::A, 0x42 => KeyCode::B, 0x43 => KeyCode::C, 0x44 => KeyCode::D,
-        0x45 => KeyCode::E, 0x46 => KeyCode::F, 0x47 => KeyCode::G, 0x48 => KeyCode::H,
-        0x49 => KeyCode::I, 0x4A => KeyCode::J, 0x4B => KeyCode::K, 0x4C => KeyCode::L,
-        0x4D => KeyCode::M, 0x4E => KeyCode::N, 0x4F => KeyCode::O, 0x50 => KeyCode::P,
-        0x51 => KeyCode::Q, 0x52 => KeyCode::R, 0x53 => KeyCode::S, 0x54 => KeyCode::T,
-        0x55 => KeyCode::U, 0x56 => KeyCode::V, 0x57 => KeyCode::W, 0x58 => KeyCode::X,
-        0x59 => KeyCode::Y, 0x5A => KeyCode::Z,
-        0x30 => KeyCode::Num0, 0x31 => KeyCode::Num1, 0x32 => KeyCode::Num2, 0x33 => KeyCode::Num3,
-        0x34 => KeyCode::Num4, 0x35 => KeyCode::Num5, 0x36 => KeyCode::Num6, 0x37 => KeyCode::Num7,
-        0x38 => KeyCode::Num8, 0x39 => KeyCode::Num9,
-        0xBD => KeyCode::Minus, 0xBB => KeyCode::Equal,
-        0xDB => KeyCode::LBracket, 0xDD => KeyCode::RBracket, 0xDC => KeyCode::Backslash,
-        0xBA => KeyCode::Semicolon, 0xDE => KeyCode::Quote,
-        0xBC => KeyCode::Comma, 0xBE => KeyCode::Dot, 0xBF => KeyCode::Slash,
+        0x41 => KeyCode::A,
+        0x42 => KeyCode::B,
+        0x43 => KeyCode::C,
+        0x44 => KeyCode::D,
+        0x45 => KeyCode::E,
+        0x46 => KeyCode::F,
+        0x47 => KeyCode::G,
+        0x48 => KeyCode::H,
+        0x49 => KeyCode::I,
+        0x4A => KeyCode::J,
+        0x4B => KeyCode::K,
+        0x4C => KeyCode::L,
+        0x4D => KeyCode::M,
+        0x4E => KeyCode::N,
+        0x4F => KeyCode::O,
+        0x50 => KeyCode::P,
+        0x51 => KeyCode::Q,
+        0x52 => KeyCode::R,
+        0x53 => KeyCode::S,
+        0x54 => KeyCode::T,
+        0x55 => KeyCode::U,
+        0x56 => KeyCode::V,
+        0x57 => KeyCode::W,
+        0x58 => KeyCode::X,
+        0x59 => KeyCode::Y,
+        0x5A => KeyCode::Z,
+        0x30 => KeyCode::Num0,
+        0x31 => KeyCode::Num1,
+        0x32 => KeyCode::Num2,
+        0x33 => KeyCode::Num3,
+        0x34 => KeyCode::Num4,
+        0x35 => KeyCode::Num5,
+        0x36 => KeyCode::Num6,
+        0x37 => KeyCode::Num7,
+        0x38 => KeyCode::Num8,
+        0x39 => KeyCode::Num9,
+        0xBD => KeyCode::Minus,
+        0xBB => KeyCode::Equal,
+        0xDB => KeyCode::LBracket,
+        0xDD => KeyCode::RBracket,
+        0xDC => KeyCode::Backslash,
+        0xBA => KeyCode::Semicolon,
+        0xDE => KeyCode::Quote,
+        0xBC => KeyCode::Comma,
+        0xBE => KeyCode::Dot,
+        0xBF => KeyCode::Slash,
         0xC0 => KeyCode::Grave,
         0x20 => KeyCode::Space,
         0x0D => KeyCode::Enter,
@@ -523,7 +563,10 @@ fn vk_to_keycode(vk: u32, _extended: bool, keyboard: KeyboardLayout) -> KeyCode 
         0x08 => KeyCode::Backspace,
         0x1B => KeyCode::Escape,
         0x14 => KeyCode::CapsLock,
-        0x25 => KeyCode::Left, 0x27 => KeyCode::Right, 0x26 => KeyCode::Up, 0x28 => KeyCode::Down,
+        0x25 => KeyCode::Left,
+        0x27 => KeyCode::Right,
+        0x26 => KeyCode::Up,
+        0x28 => KeyCode::Down,
         0x10 => KeyCode::ShiftL,
         0xA0 => KeyCode::ShiftL,
         0xA1 => KeyCode::ShiftR,
@@ -546,7 +589,9 @@ fn vk_to_keycode(vk: u32, _extended: bool, keyboard: KeyboardLayout) -> KeyCode 
 }
 
 fn inject_output_seq(seq: &OutputSeq, keyboard: KeyboardLayout) {
-    if seq.is_empty() { return; }
+    if seq.is_empty() {
+        return;
+    }
 
     let mut inputs: Vec<INPUT> = Vec::with_capacity(seq.len() * 4);
 
@@ -684,39 +729,74 @@ fn keycode_to_vk(k: KeyCode, keyboard: KeyboardLayout) -> VIRTUAL_KEY {
         }
     }
     match k {
-        KeyCode::A => VIRTUAL_KEY(0x41), KeyCode::B => VIRTUAL_KEY(0x42), KeyCode::C => VIRTUAL_KEY(0x43),
-        KeyCode::D => VIRTUAL_KEY(0x44), KeyCode::E => VIRTUAL_KEY(0x45), KeyCode::F => VIRTUAL_KEY(0x46),
-        KeyCode::G => VIRTUAL_KEY(0x47), KeyCode::H => VIRTUAL_KEY(0x48), KeyCode::I => VIRTUAL_KEY(0x49),
-        KeyCode::J => VIRTUAL_KEY(0x4A), KeyCode::K => VIRTUAL_KEY(0x4B), KeyCode::L => VIRTUAL_KEY(0x4C),
-        KeyCode::M => VIRTUAL_KEY(0x4D), KeyCode::N => VIRTUAL_KEY(0x4E), KeyCode::O => VIRTUAL_KEY(0x4F),
-        KeyCode::P => VIRTUAL_KEY(0x50), KeyCode::Q => VIRTUAL_KEY(0x51), KeyCode::R => VIRTUAL_KEY(0x52),
-        KeyCode::S => VIRTUAL_KEY(0x53), KeyCode::T => VIRTUAL_KEY(0x54), KeyCode::U => VIRTUAL_KEY(0x55),
-        KeyCode::V => VIRTUAL_KEY(0x56), KeyCode::W => VIRTUAL_KEY(0x57), KeyCode::X => VIRTUAL_KEY(0x58),
-        KeyCode::Y => VIRTUAL_KEY(0x59), KeyCode::Z => VIRTUAL_KEY(0x5A),
-        KeyCode::Num0 => VIRTUAL_KEY(0x30), KeyCode::Num1 => VIRTUAL_KEY(0x31), KeyCode::Num2 => VIRTUAL_KEY(0x32),
-        KeyCode::Num3 => VIRTUAL_KEY(0x33), KeyCode::Num4 => VIRTUAL_KEY(0x34), KeyCode::Num5 => VIRTUAL_KEY(0x35),
-        KeyCode::Num6 => VIRTUAL_KEY(0x36), KeyCode::Num7 => VIRTUAL_KEY(0x37), KeyCode::Num8 => VIRTUAL_KEY(0x38),
+        KeyCode::A => VIRTUAL_KEY(0x41),
+        KeyCode::B => VIRTUAL_KEY(0x42),
+        KeyCode::C => VIRTUAL_KEY(0x43),
+        KeyCode::D => VIRTUAL_KEY(0x44),
+        KeyCode::E => VIRTUAL_KEY(0x45),
+        KeyCode::F => VIRTUAL_KEY(0x46),
+        KeyCode::G => VIRTUAL_KEY(0x47),
+        KeyCode::H => VIRTUAL_KEY(0x48),
+        KeyCode::I => VIRTUAL_KEY(0x49),
+        KeyCode::J => VIRTUAL_KEY(0x4A),
+        KeyCode::K => VIRTUAL_KEY(0x4B),
+        KeyCode::L => VIRTUAL_KEY(0x4C),
+        KeyCode::M => VIRTUAL_KEY(0x4D),
+        KeyCode::N => VIRTUAL_KEY(0x4E),
+        KeyCode::O => VIRTUAL_KEY(0x4F),
+        KeyCode::P => VIRTUAL_KEY(0x50),
+        KeyCode::Q => VIRTUAL_KEY(0x51),
+        KeyCode::R => VIRTUAL_KEY(0x52),
+        KeyCode::S => VIRTUAL_KEY(0x53),
+        KeyCode::T => VIRTUAL_KEY(0x54),
+        KeyCode::U => VIRTUAL_KEY(0x55),
+        KeyCode::V => VIRTUAL_KEY(0x56),
+        KeyCode::W => VIRTUAL_KEY(0x57),
+        KeyCode::X => VIRTUAL_KEY(0x58),
+        KeyCode::Y => VIRTUAL_KEY(0x59),
+        KeyCode::Z => VIRTUAL_KEY(0x5A),
+        KeyCode::Num0 => VIRTUAL_KEY(0x30),
+        KeyCode::Num1 => VIRTUAL_KEY(0x31),
+        KeyCode::Num2 => VIRTUAL_KEY(0x32),
+        KeyCode::Num3 => VIRTUAL_KEY(0x33),
+        KeyCode::Num4 => VIRTUAL_KEY(0x34),
+        KeyCode::Num5 => VIRTUAL_KEY(0x35),
+        KeyCode::Num6 => VIRTUAL_KEY(0x36),
+        KeyCode::Num7 => VIRTUAL_KEY(0x37),
+        KeyCode::Num8 => VIRTUAL_KEY(0x38),
         KeyCode::Num9 => VIRTUAL_KEY(0x39),
         KeyCode::Space => VK_SPACE,
         KeyCode::Enter => VK_RETURN,
         KeyCode::Tab => VK_TAB,
         KeyCode::Backspace => VK_BACK,
         KeyCode::Escape => VK_ESCAPE,
-        KeyCode::Left => VK_LEFT, KeyCode::Right => VK_RIGHT, KeyCode::Up => VK_UP, KeyCode::Down => VK_DOWN,
-        KeyCode::ShiftL => VK_LSHIFT, KeyCode::ShiftR => VK_RSHIFT,
-        KeyCode::CtrlL => VK_LCONTROL, KeyCode::CtrlR => VK_RCONTROL,
-        KeyCode::AltL => VK_LMENU, KeyCode::AltR => VK_RMENU,
-        KeyCode::MetaL => VK_LWIN, KeyCode::MetaR => VK_RWIN,
+        KeyCode::Left => VK_LEFT,
+        KeyCode::Right => VK_RIGHT,
+        KeyCode::Up => VK_UP,
+        KeyCode::Down => VK_DOWN,
+        KeyCode::ShiftL => VK_LSHIFT,
+        KeyCode::ShiftR => VK_RSHIFT,
+        KeyCode::CtrlL => VK_LCONTROL,
+        KeyCode::CtrlR => VK_RCONTROL,
+        KeyCode::AltL => VK_LMENU,
+        KeyCode::AltR => VK_RMENU,
+        KeyCode::MetaL => VK_LWIN,
+        KeyCode::MetaR => VK_RWIN,
         KeyCode::CapsLock => VK_CAPITAL,
         KeyCode::Henkan => VK_CONVERT,
         KeyCode::Muhenkan => VK_NONCONVERT,
         KeyCode::KanaKatakana => VK_KANA,
         KeyCode::HankakuZenkaku => VK_KANJI,
-        KeyCode::Minus => VIRTUAL_KEY(0xBD), KeyCode::Equal => VIRTUAL_KEY(0xBB),
-        KeyCode::LBracket => VIRTUAL_KEY(0xDB), KeyCode::RBracket => VIRTUAL_KEY(0xDD),
-        KeyCode::Backslash => VIRTUAL_KEY(0xDC), KeyCode::Semicolon => VIRTUAL_KEY(0xBA),
-        KeyCode::Quote => VIRTUAL_KEY(0xDE), KeyCode::Comma => VIRTUAL_KEY(0xBC),
-        KeyCode::Dot => VIRTUAL_KEY(0xBE), KeyCode::Slash => VIRTUAL_KEY(0xBF),
+        KeyCode::Minus => VIRTUAL_KEY(0xBD),
+        KeyCode::Equal => VIRTUAL_KEY(0xBB),
+        KeyCode::LBracket => VIRTUAL_KEY(0xDB),
+        KeyCode::RBracket => VIRTUAL_KEY(0xDD),
+        KeyCode::Backslash => VIRTUAL_KEY(0xDC),
+        KeyCode::Semicolon => VIRTUAL_KEY(0xBA),
+        KeyCode::Quote => VIRTUAL_KEY(0xDE),
+        KeyCode::Comma => VIRTUAL_KEY(0xBC),
+        KeyCode::Dot => VIRTUAL_KEY(0xBE),
+        KeyCode::Slash => VIRTUAL_KEY(0xBF),
         KeyCode::Grave => VIRTUAL_KEY(0xC0),
         _ => VIRTUAL_KEY(0),
     }
@@ -725,8 +805,10 @@ fn keycode_to_vk(k: KeyCode, keyboard: KeyboardLayout) -> VIRTUAL_KEY {
 #[allow(dead_code)]
 fn keycode_to_char_fallback(k: KeyCode) -> Option<char> {
     match k {
-        KeyCode::A => Some('a'), KeyCode::B => Some('b'),
-        KeyCode::Q => Some('q'), KeyCode::W => Some('w'),
+        KeyCode::A => Some('a'),
+        KeyCode::B => Some('b'),
+        KeyCode::Q => Some('q'),
+        KeyCode::W => Some('w'),
         _ => None,
     }
 }
@@ -763,8 +845,8 @@ fn load_layout_for_app(app_id: &str, cfg: &AppConfig) -> Layout {
 /// Re-loads AppConfig too (supports live edit of per-app map), re-resolves for current fg app,
 /// swaps Arc<Layout>, clears matcher (safe boundary: no in-flight combo across reload).
 pub fn reload_layout() {
-    let new_cfg = AppConfig::load(Path::new("data/config.json"))
-        .unwrap_or_else(|_| AppConfig::fallback());
+    let new_cfg =
+        AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
     IME_GATING.store(new_cfg.activate_only_when_ime_on, Ordering::Relaxed);
     DISPATCH_RATE_MS.store(new_cfg.dispatch_rate_ms.max(1), Ordering::Relaxed);
     let app = get_foreground_app_id();
@@ -775,7 +857,10 @@ pub fn reload_layout() {
             st.matcher.clear();
             // FR-6: re-apply disable keys from the freshly loaded config.
             st.matcher.set_disable_keys(new_cfg.disable_keycodes());
-            st.direct_input_keys = crate::config::keycodes_from_config_name(&new_cfg.direct_input_key).into_iter().collect();
+            st.direct_input_keys =
+                crate::config::keycodes_from_config_name(&new_cfg.direct_input_key)
+                    .into_iter()
+                    .collect();
             st.direct_input_mode = DirectInputMode::from_config_str(&new_cfg.direct_input_mode);
             if new_cfg.combo_window_ms > 0 {
                 st.matcher.set_combo_window_ms(new_cfg.combo_window_ms);
@@ -845,7 +930,13 @@ fn get_foreground_app_id() -> String {
         };
         let mut buf: [u16; 260] = [0; 260];
         let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        )
+        .is_ok();
         let _ = CloseHandle(handle);
         if !ok || len == 0 {
             return String::new();
@@ -854,6 +945,10 @@ fn get_foreground_app_id() -> String {
         let name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
         let name = name.to_ascii_lowercase();
         let name = name.strip_suffix(".exe").unwrap_or(&name).to_string();
-        if name.is_empty() { String::new() } else { name }
+        if name.is_empty() {
+            String::new()
+        } else {
+            name
+        }
     }
 }

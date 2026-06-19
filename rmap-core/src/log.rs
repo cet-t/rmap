@@ -59,7 +59,10 @@ macro_rules! notify_err {
 
 /// UTC timestamp "YYYY-MM-DD HH:MM:SS" without pulling in a date dependency.
 fn timestamp() -> String {
-    let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);

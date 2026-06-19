@@ -2,7 +2,7 @@
 //! JSON for app->profile map and global defaults. Layouts still loaded via LayoutLoader trait (DvorakJ files).
 
 use crate::keycode::KeyCode;
-use crate::profile::{Profile, ProfileId, AppProfileMap, ProfileToggles};
+use crate::profile::{AppProfileMap, Profile, ProfileId, ProfileToggles};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

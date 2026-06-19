@@ -5,4 +5,6 @@
 pub mod windows;
 
 #[cfg(target_os = "windows")]
-pub use windows::{install_and_run_windows_hook, reload_layout, set_suspend, toggle_suspend, is_suspended};
+pub use windows::{
+    install_and_run_windows_hook, is_suspended, reload_layout, set_suspend, toggle_suspend,
+};

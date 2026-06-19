@@ -1,14 +1,24 @@
 //! Layout: compiled mapping + metadata.
 
-use crate::{KeyCode, KeyboardLayout, OutputSeq, InputMode};
+use crate::{InputMode, KeyCode, KeyboardLayout, OutputSeq};
 use std::collections::HashMap;
 
 pub type LayoutId = String;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutMode {
+    #[default]
+    Legacy,
+    Sequential,
+    Simultaneous,
+    Mixed,
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct Layout {
     pub id: LayoutId,
     pub name: String,
+    pub mode: LayoutMode,
     pub input_mode: InputMode,
     /// Physical keyboard layout this layout's grid was compiled against,
     /// determined by the loader from the file's format (`.jp.txt` = JIS,
@@ -38,13 +48,18 @@ pub struct Layout {
     /// via `-option-input`. These stay active for every content key until
     /// released, as opposed to one-shot 同時打鍵 chords.
     pub sustained_triggers: std::collections::HashSet<KeyCode>,
+    /// 順次打鍵 (prefix/sequential) layers: trigger key(s) pressed then released,
+    /// followed by a content key within the prefix window.
+    pub prefix_maps: HashMap<Vec<KeyCode>, HashMap<KeyCode, OutputSeq>>,
+    /// Keys that act as prefix (sequential) triggers.
+    pub prefix_triggers: std::collections::HashSet<KeyCode>,
     /// Legacy simultaneous rules (kept for compatibility)
     pub simultaneous: Vec<ComboRule>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ComboRule {
-    pub layers: Vec<KeyCode>,  // e.g. [Space] for SandS, or [Muhenkan, Henkan] etc.
+    pub layers: Vec<KeyCode>, // e.g. [Space] for SandS, or [Muhenkan, Henkan] etc.
     pub output: OutputSeq,
 }
 

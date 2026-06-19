@@ -8,15 +8,21 @@
 
 use dvorakj_parser::DvorakJLayoutLoader;
 use rmap_core::{
-    LayoutLoader, InputMatcher, MatchAction, Event, EventKind, KeyCode,
-    Modifiers, OutputToken, SpecialKey,
+    Event, EventKind, InputMatcher, KeyCode, LayoutLoader, LayoutMode, MatchAction, Modifiers,
+    OutputToken, SpecialKey,
 };
 
 fn down(code: KeyCode) -> Event {
     Event::new(EventKind::KeyDown, code, Modifiers::empty())
 }
 fn up(code: KeyCode) -> Event {
-    Event { kind: EventKind::KeyUp, code, modifiers: Modifiers::empty(), timestamp: 0, held: false }
+    Event {
+        kind: EventKind::KeyUp,
+        code,
+        modifiers: Modifiers::empty(),
+        timestamp: 0,
+        held: false,
+    }
 }
 fn emit(a: MatchAction) -> Vec<OutputToken> {
     match a {
@@ -60,7 +66,11 @@ fn simultaneous_chord_fires() {
         rmap_core::layout::canon_sort(&mut v);
         v
     };
-    let combo_out = layout.combos.get(&chord).expect("K+Q chord must exist").clone();
+    let combo_out = layout
+        .combos
+        .get(&chord)
+        .expect("K+Q chord must exist")
+        .clone();
 
     let mut m = InputMatcher::default();
     // Press K then Q within the window -> chord resolves on the 2nd key-down.
@@ -80,11 +90,13 @@ fn function_key_tokens_compile() {
     // plus a Named(Enter), not the literal text "{enter}".
     let r = layout.single_map.get(&KeyCode::R).expect("R base mapping");
     assert!(
-        r.iter().any(|t| matches!(t, OutputToken::Named(SpecialKey::Enter))),
+        r.iter()
+            .any(|t| matches!(t, OutputToken::Named(SpecialKey::Enter))),
         "R base output must contain a real Enter key, got {r:?}"
     );
     assert!(
-        !r.iter().any(|t| matches!(t, OutputToken::Text(s) if s.contains("enter"))),
+        !r.iter()
+            .any(|t| matches!(t, OutputToken::Text(s) if s.contains("enter"))),
         "must not emit literal '{{enter}}' text"
     );
 }
@@ -96,15 +108,24 @@ fn function_key_tokens_compile() {
 fn sequential_top_row_in_order() {
     let layout = load("data/layouts/圧縮版_新下駄配列.txt");
     let row = [
-        KeyCode::Q, KeyCode::W, KeyCode::E, KeyCode::R, KeyCode::T,
-        KeyCode::Y, KeyCode::U, KeyCode::I, KeyCode::O, KeyCode::P,
+        KeyCode::Q,
+        KeyCode::W,
+        KeyCode::E,
+        KeyCode::R,
+        KeyCode::T,
+        KeyCode::Y,
+        KeyCode::U,
+        KeyCode::I,
+        KeyCode::O,
+        KeyCode::P,
     ];
     let mut m = InputMatcher::default();
     let mut got: Vec<OutputToken> = vec![];
     for &k in &row {
         // Down defers (these are all chord keys); up (within window) resolves.
         assert_eq!(m.process(&down(k), &layout), MatchAction::Block);
-        if let MatchAction::Emit(seq) | MatchAction::EmitThenPass(seq) = m.process(&up(k), &layout) {
+        if let MatchAction::Emit(seq) | MatchAction::EmitThenPass(seq) = m.process(&up(k), &layout)
+        {
             got.extend(seq);
         }
     }
@@ -123,15 +144,33 @@ fn sustained_sands_layer_and_tap() {
 
     let mut m = InputMatcher::default();
     // Space down blocked; tap (up, no partner) emits the tap output.
-    assert_eq!(m.process(&down(KeyCode::Space), &layout), MatchAction::Block);
+    assert_eq!(
+        m.process(&down(KeyCode::Space), &layout),
+        MatchAction::Block
+    );
     assert!(!emit(m.process(&up(KeyCode::Space), &layout)).is_empty());
 
     // Hold Space, press Q -> shifted Q from the layer; multiple keys keep shifting.
-    assert_eq!(m.process(&down(KeyCode::Space), &layout), MatchAction::Block);
+    assert_eq!(
+        m.process(&down(KeyCode::Space), &layout),
+        MatchAction::Block
+    );
     let q = emit(m.process(&down(KeyCode::Q), &layout));
-    assert!(q.iter().any(|t| matches!(t, OutputToken::Key { code: KeyCode::Q, .. })));
+    assert!(q.iter().any(|t| matches!(
+        t,
+        OutputToken::Key {
+            code: KeyCode::Q,
+            ..
+        }
+    )));
     let w = emit(m.process(&down(KeyCode::W), &layout));
-    assert!(w.iter().any(|t| matches!(t, OutputToken::Key { code: KeyCode::W, .. })));
+    assert!(w.iter().any(|t| matches!(
+        t,
+        OutputToken::Key {
+            code: KeyCode::W,
+            ..
+        }
+    )));
     assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::Block);
     assert_eq!(m.process(&up(KeyCode::W), &layout), MatchAction::Block);
     // Space had a partner -> no tap on release.
@@ -144,10 +183,22 @@ fn disable_key_passthrough() {
     let layout = load("data/layouts/samples/toy_simul.txt");
     let mut m = InputMatcher::default();
     m.set_disable_keys([KeyCode::CtrlL, KeyCode::CtrlR]);
-    assert_eq!(m.process(&down(KeyCode::CtrlL), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&down(KeyCode::Q), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::CtrlL), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::CtrlL), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&down(KeyCode::Q), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::Q), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::CtrlL), &layout),
+        MatchAction::PassThrough
+    );
 }
 
 /// Ctrl held auto-bypasses (Ctrl+letter stays a shortcut, never becomes kana).
@@ -155,11 +206,23 @@ fn disable_key_passthrough() {
 fn ctrl_held_bypasses() {
     let layout = load("data/layouts/圧縮版_新下駄配列.txt");
     let mut m = InputMatcher::default();
-    assert_eq!(m.process(&down(KeyCode::CtrlL), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::CtrlL), &layout),
+        MatchAction::PassThrough
+    );
     // A would normally defer as a combo key; under Ctrl it passes through.
-    assert_eq!(m.process(&down(KeyCode::A), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::A), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::CtrlL), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::A), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::A), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::CtrlL), &layout),
+        MatchAction::PassThrough
+    );
 }
 
 /// 新下駄: this layout declares no `-shift[...]` block, so LShift is neither a
@@ -173,8 +236,14 @@ fn shift_passes_through_when_layout_has_no_shift_block() {
     assert!(!layout.single_map.contains_key(&KeyCode::ShiftL));
 
     let mut m = InputMatcher::default();
-    assert_eq!(m.process(&down(KeyCode::ShiftL), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::ShiftL), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::ShiftL), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::ShiftL), &layout),
+        MatchAction::PassThrough
+    );
 }
 
 /// Built-in SandS (Space and Shift), layout-independent: 新下駄 declares no
@@ -189,17 +258,26 @@ fn builtin_sands_space_and_shift() {
     let mut m = InputMatcher::default();
 
     // Tap Space: down is held (Block), release with no partner emits a Space.
-    assert_eq!(m.process(&down(KeyCode::Space), &layout), MatchAction::Block);
+    assert_eq!(
+        m.process(&down(KeyCode::Space), &layout),
+        MatchAction::Block
+    );
     let tap = emit(m.process(&up(KeyCode::Space), &layout));
     assert_eq!(
         tap,
-        vec![OutputToken::Key { code: KeyCode::Space, mods: Modifiers::empty() }],
+        vec![OutputToken::Key {
+            code: KeyCode::Space,
+            mods: Modifiers::empty()
+        }],
         "tapping Space alone must emit a Space"
     );
 
     // Hold Space + Q: inject synthetic LSHIFT↓ and pass the physical Q through.
     // The OS sees real Shift + real Q, preserving scan codes and extended flags.
-    assert_eq!(m.process(&down(KeyCode::Space), &layout), MatchAction::Block);
+    assert_eq!(
+        m.process(&down(KeyCode::Space), &layout),
+        MatchAction::Block
+    );
     let q_action = m.process(&down(KeyCode::Q), &layout);
     assert_eq!(
         q_action,
@@ -207,7 +285,10 @@ fn builtin_sands_space_and_shift() {
         "first SandS partner injects ShiftL↓ and passes the content key through"
     );
     // Q key-up passes through (it was never eaten).
-    assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&up(KeyCode::Q), &layout),
+        MatchAction::PassThrough
+    );
     // Space release with a partner -> release the synthetic ShiftL.
     let space_up = emit(m.process(&up(KeyCode::Space), &layout));
     assert_eq!(
@@ -226,8 +307,14 @@ fn builtin_sands_disabled_space_is_ordinary() {
     m.set_sands_enabled(false);
 
     // Space is unmapped & not a combo key in 新下駄 -> passes straight through.
-    assert_eq!(m.process(&down(KeyCode::Space), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::Space), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::Space), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::Space), &layout),
+        MatchAction::PassThrough
+    );
 }
 
 /// FR-8: suspend -> passthrough; resume -> remapping restored.
@@ -236,10 +323,113 @@ fn suspend_toggle() {
     let layout = load("data/layouts/samples/toy_simul.txt");
     let mut m = InputMatcher::default();
     assert!(m.toggle_suspended());
-    assert_eq!(m.process(&down(KeyCode::Q), &layout), MatchAction::PassThrough);
-    assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::PassThrough);
+    assert_eq!(
+        m.process(&down(KeyCode::Q), &layout),
+        MatchAction::PassThrough
+    );
+    assert_eq!(
+        m.process(&up(KeyCode::Q), &layout),
+        MatchAction::PassThrough
+    );
     assert!(!m.toggle_suspended());
     // Q is not a combo key in the SandS toy -> immediate base emit.
     assert!(!emit(m.process(&down(KeyCode::Q), &layout)).is_empty());
     assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::Block);
+}
+
+// ===== 順次打鍵 (prefix/sequential) tests =====
+
+/// 月2-263 is detected as Sequential mode, with D and K as prefix triggers.
+#[test]
+fn tsuki_mode_and_triggers() {
+    let layout = load("data/layouts/月2-263.txt");
+    assert_eq!(layout.mode, LayoutMode::Sequential);
+    assert!(layout.prefix_triggers.contains(&KeyCode::D));
+    assert!(layout.prefix_triggers.contains(&KeyCode::K));
+    assert!(!layout.sustained_triggers.contains(&KeyCode::D));
+    assert!(!layout.sustained_triggers.contains(&KeyCode::K));
+    assert!(!layout.prefix_maps.is_empty());
+}
+
+/// 月2-263: press D (trigger), release D, then press Q (content) → prefix output.
+#[test]
+fn sequential_prefix_basic() {
+    let layout = load("data/layouts/月2-263.txt");
+    let d_layer = {
+        let mut v = vec![KeyCode::D];
+        rmap_core::layout::canon_sort(&mut v);
+        v
+    };
+    let prefix_map = layout
+        .prefix_maps
+        .get(&d_layer)
+        .expect("D prefix layer must exist");
+    let expected = prefix_map
+        .get(&KeyCode::Q)
+        .expect("D+Q prefix mapping")
+        .clone();
+
+    let mut m = InputMatcher::default();
+    // D down: blocked (prefix trigger)
+    assert_eq!(m.process(&down(KeyCode::D), &layout), MatchAction::Block);
+    // D up: arms prefix window
+    assert_eq!(m.process(&up(KeyCode::D), &layout), MatchAction::Block);
+    // Q down within prefix window: emits the prefix-mapped output
+    let out = emit(m.process(&down(KeyCode::Q), &layout));
+    assert_eq!(
+        out, expected,
+        "D prefix + Q content must produce the prefix mapping"
+    );
+    assert_eq!(m.process(&up(KeyCode::Q), &layout), MatchAction::Block);
+}
+
+/// 月2-263: D held while content key pressed (overlapping timing) → still prefix.
+#[test]
+fn sequential_prefix_overlap() {
+    let layout = load("data/layouts/月2-263.txt");
+    let d_layer = {
+        let mut v = vec![KeyCode::D];
+        rmap_core::layout::canon_sort(&mut v);
+        v
+    };
+    let prefix_map = layout
+        .prefix_maps
+        .get(&d_layer)
+        .expect("D prefix layer must exist");
+    let expected = prefix_map
+        .get(&KeyCode::W)
+        .expect("D+W prefix mapping")
+        .clone();
+
+    let mut m = InputMatcher::default();
+    // D down
+    assert_eq!(m.process(&down(KeyCode::D), &layout), MatchAction::Block);
+    // W down while D still held: prefix resolves immediately
+    let out = emit(m.process(&down(KeyCode::W), &layout));
+    assert_eq!(
+        out, expected,
+        "D held + W must produce prefix mapping even with overlap"
+    );
+    assert_eq!(m.process(&up(KeyCode::W), &layout), MatchAction::Block);
+    // D up: had partner, just block
+    assert_eq!(m.process(&up(KeyCode::D), &layout), MatchAction::Block);
+}
+
+/// 新下駄: simultaneous mode is unchanged — combos still work, no prefix.
+#[test]
+fn simultaneous_mode_unchanged() {
+    let layout = load("data/layouts/圧縮版_新下駄配列.txt");
+    assert_eq!(layout.mode, LayoutMode::Simultaneous);
+    assert!(layout.prefix_maps.is_empty());
+    assert!(layout.prefix_triggers.is_empty());
+    assert!(!layout.combos.is_empty());
+}
+
+/// Legacy SandS toy: mode is Legacy, sustained triggers still work.
+#[test]
+fn legacy_sands_mode_unchanged() {
+    let layout = load("data/layouts/samples/toy_simul.txt");
+    assert_eq!(layout.mode, LayoutMode::Legacy);
+    assert!(layout.sustained_triggers.contains(&KeyCode::Space));
+    assert!(layout.prefix_maps.is_empty());
 }

@@ -119,9 +119,9 @@ impl raw_window_handle::HasDisplayHandle for HwndParent {
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
         let handle = raw_window_handle::WindowsDisplayHandle::new();
         Ok(unsafe {
-            raw_window_handle::DisplayHandle::borrow_raw(raw_window_handle::RawDisplayHandle::Windows(
-                handle,
-            ))
+            raw_window_handle::DisplayHandle::borrow_raw(
+                raw_window_handle::RawDisplayHandle::Windows(handle),
+            )
         })
     }
 }
@@ -179,11 +179,19 @@ fn load_config_to_window(window: &AppWindow, cfg: &AppConfig) -> Vec<String> {
         _ => 0,
     };
     window.set_sands_mode_index(sands_mode_index);
-    window.set_combo_window_ms(if cfg.combo_window_ms > 0 { cfg.combo_window_ms as i32 } else { 40 });
+    window.set_combo_window_ms(if cfg.combo_window_ms > 0 {
+        cfg.combo_window_ms as i32
+    } else {
+        40
+    });
     window.set_hold_mode(cfg.hold_mode);
     window.set_enable_sands_ime_on(cfg.enable_sands_ime_on);
     window.set_enable_sands_ime_off(cfg.enable_sands_ime_off);
-    window.set_dispatch_rate_ms(if cfg.dispatch_rate_ms > 0 { cfg.dispatch_rate_ms as i32 } else { 5 });
+    window.set_dispatch_rate_ms(if cfg.dispatch_rate_ms > 0 {
+        cfg.dispatch_rate_ms as i32
+    } else {
+        5
+    });
 
     let lower_disable: Vec<String> = cfg
         .disable_keys
@@ -357,7 +365,11 @@ fn setup_daemon_callbacks(window: &AppWindow) {
     let window_weak = window.as_weak();
     window.on_toggle_running(move || {
         let window = window_weak.unwrap();
-        report_ipc_result(&window, send_command(&IpcCommand::ToggleRunning), "切り替えました");
+        report_ipc_result(
+            &window,
+            send_command(&IpcCommand::ToggleRunning),
+            "切り替えました",
+        );
         refresh_daemon_status(&window);
     });
 

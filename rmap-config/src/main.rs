@@ -496,14 +496,21 @@ fn run_settings_window() -> Result<()> {
     Ok(())
 }
 
+/// Fix DPI scaling bug: when moving between monitors with different DPI,
+/// Slint's logical pixels (px) change size, causing the window to grow.
+/// We pin the window to a fixed physical size using Win32 API.
 #[cfg(windows)]
 fn spawn_always_on_top() {
     use windows::core::PCWSTR;
     use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowW, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        FindWindowW, GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_STYLE, HWND_TOPMOST,
+        SWP_NOACTIVATE, SWP_NOMOVE, WS_MAXIMIZEBOX, WS_THICKFRAME,
     };
 
-    std::thread::spawn(|| {
+    const WINDOW_W: i32 = 680;
+    const WINDOW_H: i32 = 480;
+
+    std::thread::spawn(move || {
         let title: Vec<u16> = "rmap 設定"
             .encode_utf16()
             .chain(std::iter::once(0))
@@ -512,14 +519,22 @@ fn spawn_always_on_top() {
             for _ in 0..40 {
                 let hwnd = FindWindowW(PCWSTR::null(), PCWSTR(title.as_ptr()));
                 if hwnd.0 != 0 {
+                    // Remove resize border and maximize box so the user can't resize
+                    let style = GetWindowLongW(hwnd, GWL_STYLE);
+                    SetWindowLongW(
+                        hwnd,
+                        GWL_STYLE,
+                        style & !(WS_THICKFRAME.0 as i32) & !(WS_MAXIMIZEBOX.0 as i32),
+                    );
+                    // Pin to fixed physical size
                     let _ = SetWindowPos(
                         hwnd,
                         HWND_TOPMOST,
                         0,
                         0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        WINDOW_W,
+                        WINDOW_H,
+                        SWP_NOMOVE | SWP_NOACTIVATE,
                     );
                     return;
                 }

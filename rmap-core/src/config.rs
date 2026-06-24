@@ -80,6 +80,10 @@ pub struct AppConfig {
     /// falling back to the trigger's solo tap. Default 300ms.
     #[serde(default = "default_prefix_window_ms")]
     pub prefix_window_ms: u64,
+    /// When true, pressing Ctrl+Space toggles the IME open/close state
+    /// (instead of producing a space). Default false.
+    #[serde(default)]
+    pub enable_ctrl_space_ime_toggle: bool,
 }
 
 fn default_prefix_window_ms() -> u64 {
@@ -174,6 +178,7 @@ impl AppConfig {
             enable_sands_ime_off: true,
             dispatch_rate_ms: default_dispatch_rate_ms(),
             prefix_window_ms: default_prefix_window_ms(),
+            enable_ctrl_space_ime_toggle: false,
         }
     }
 

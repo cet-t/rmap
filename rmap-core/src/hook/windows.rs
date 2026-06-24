@@ -47,6 +47,20 @@ static DISPATCH_RATE_MS: AtomicU64 = AtomicU64::new(5);
 /// poll). -1 = unknown, 0 = closed/off, 1 = open/on.
 static LAST_IME_LOG: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(-1);
 
+/// `AppConfig::enable_ctrl_space_ime_toggle`: when set, Ctrl+Space toggles
+/// the IME instead of producing a space. Read lock-free in the hook's hot
+/// path; set on install/reload.
+static CTRL_SPACE_IME_TOGGLE: AtomicBool = AtomicBool::new(false);
+
+/// Whether either Ctrl key is currently held, tracked from raw VK codes
+/// (independent of the matcher) so the hot path can recognise the Ctrl+Space
+/// chord without waiting on the matcher's own modifier tracking.
+static CTRL_HELD: AtomicBool = AtomicBool::new(false);
+
+/// Whether Space is currently held as part of an already-handled Ctrl+Space
+/// toggle, so OS auto-repeat doesn't retoggle the IME on every repeat tick.
+static CTRL_SPACE_DOWN: AtomicBool = AtomicBool::new(false);
+
 /// SandS direct-input mode (`AppConfig::direct_input_mode`): what holding
 /// `direct_input_key` does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -129,6 +143,62 @@ fn ime_open_status() -> Option<bool> {
             fg
         };
         ime_open_of(focus).or_else(|| ime_open_of(fg))
+    }
+}
+
+/// `IMC_SETOPENSTATUS`: set whether one window's default IME is open.
+const IMC_SETOPENSTATUS: usize = 0x0006;
+
+/// Set one window's default IME open/closed, via `WM_IME_CONTROL`. Mirrors
+/// `ime_open_of`'s targeting (default IME window of `hwnd`).
+unsafe fn ime_set_open_of(hwnd: windows::Win32::Foundation::HWND, open: bool) -> bool {
+    if hwnd.0 == 0 {
+        return false;
+    }
+    let ime = ImmGetDefaultIMEWnd(hwnd);
+    if ime.0 == 0 {
+        return false;
+    }
+    let ok = SendMessageTimeoutW(
+        ime,
+        WM_IME_CONTROL,
+        WPARAM(IMC_SETOPENSTATUS),
+        LPARAM(open as isize),
+        SMTO_ABORTIFHUNG,
+        100,
+        None,
+    );
+    ok.0 != 0
+}
+
+/// Ctrl+Space handler: flip the focused control's IME open state. Targets
+/// the same hwnd `ime_open_status` would read from, so the toggle direction
+/// matches what the user currently sees.
+fn toggle_ime_open_status() {
+    use windows::Win32::UI::WindowsAndMessaging::{GetGUIThreadInfo, GUITHREADINFO};
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0 == 0 {
+            return;
+        }
+        let tid = GetWindowThreadProcessId(fg, None);
+        let mut gui = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let focus = if GetGUIThreadInfo(tid, &mut gui).is_ok() && gui.hwndFocus.0 != 0 {
+            gui.hwndFocus
+        } else {
+            fg
+        };
+        let target = if ime_open_of(focus).is_some() {
+            focus
+        } else {
+            fg
+        };
+        if let Some(current) = ime_open_of(target) {
+            ime_set_open_of(target, !current);
+        }
     }
 }
 
@@ -251,6 +321,7 @@ pub fn install_and_run_windows_hook() -> JoinHandle<()> {
         AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
     IME_GATING.store(app_config.activate_only_when_ime_on, Ordering::Relaxed);
     DISPATCH_RATE_MS.store(app_config.dispatch_rate_ms.max(1), Ordering::Relaxed);
+    CTRL_SPACE_IME_TOGGLE.store(app_config.enable_ctrl_space_ime_toggle, Ordering::Relaxed);
     let initial_app = get_foreground_app_id();
     let normal_layout = std::sync::Arc::new(load_layout_for_app(&initial_app, &app_config));
     let ime_off_layout = load_optional_layout(&app_config.ime_off_layout);
@@ -399,6 +470,29 @@ unsafe extern "system" fn low_level_proc(n_code: i32, w_param: WPARAM, l_param: 
 
     if !is_down && !is_up {
         return CallNextHookEx(None, n_code, w_param, l_param);
+    }
+
+    // Ctrl+Space IME toggle (AppConfig::enable_ctrl_space_ime_toggle): tracked
+    // ahead of the matcher so the chord is recognised even though the matcher
+    // has no notion of "OS modifier + key". Ctrl itself always passes through
+    // unchanged; Space is only eaten while Ctrl is down and the feature is on.
+    const VK_LCONTROL_U32: u32 = 0xA2;
+    const VK_RCONTROL_U32: u32 = 0xA3;
+    const VK_CONTROL_U32: u32 = 0x11;
+    if matches!(vk, VK_LCONTROL_U32 | VK_RCONTROL_U32 | VK_CONTROL_U32) {
+        CTRL_HELD.store(is_down, Ordering::Relaxed);
+    } else if vk == VK_SPACE.0 as u32 {
+        if is_down
+            && CTRL_SPACE_IME_TOGGLE.load(Ordering::Relaxed)
+            && CTRL_HELD.load(Ordering::Relaxed)
+        {
+            if !CTRL_SPACE_DOWN.swap(true, Ordering::Relaxed) {
+                toggle_ime_open_status();
+            }
+            return LRESULT(1);
+        } else if is_up {
+            CTRL_SPACE_DOWN.store(false, Ordering::Relaxed);
+        }
     }
 
     let mods = current_modifiers_from_vk(vk, is_down); // best effort; real state tracked in matcher too
@@ -853,6 +947,7 @@ pub fn reload_layout() {
         AppConfig::load(Path::new("data/config.json")).unwrap_or_else(|_| AppConfig::fallback());
     IME_GATING.store(new_cfg.activate_only_when_ime_on, Ordering::Relaxed);
     DISPATCH_RATE_MS.store(new_cfg.dispatch_rate_ms.max(1), Ordering::Relaxed);
+    CTRL_SPACE_IME_TOGGLE.store(new_cfg.enable_ctrl_space_ime_toggle, Ordering::Relaxed);
     let app = get_foreground_app_id();
     let new_layout = std::sync::Arc::new(load_layout_for_app(&app, &new_cfg));
     let new_ime_off_layout = load_optional_layout(&new_cfg.ime_off_layout);

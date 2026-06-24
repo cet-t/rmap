@@ -211,6 +211,7 @@ fn load_config_to_window(window: &AppWindow, cfg: &AppConfig) -> Vec<String> {
             .any(|s| matches!(s.as_str(), "win" | "meta" | "super" | "cmd")),
     );
     window.set_disable_shift(lower_disable.iter().any(|s| s == "shift"));
+    window.set_enable_ctrl_space_ime_toggle(cfg.enable_ctrl_space_ime_toggle);
 
     cfg.disable_keys
         .iter()
@@ -297,11 +298,15 @@ fn setup_browse_callbacks(window: &AppWindow, profiles_model: &Rc<VecModel<Profi
         }
         let idx = idx as usize;
         let model = model.clone();
+        let window_weak = window_weak.clone();
         let _ = slint::spawn_local(async move {
             if let Some(path) = pick_layout_file_async().await {
                 if let Some(mut row) = model.row_data(idx) {
                     row.layout = path.into();
                     model.set_row_data(idx, row);
+                    if let Some(window) = window_weak.upgrade() {
+                        window.set_dirty(true);
+                    }
                 }
             }
         });
@@ -320,6 +325,7 @@ fn setup_profile_callbacks(window: &AppWindow, profiles_model: &Rc<VecModel<Prof
         if let Some(mut row) = model.row_data(idx as usize) {
             row.layout = text;
             model.set_row_data(idx as usize, row);
+            window.set_dirty(true);
         }
     });
 
@@ -334,6 +340,7 @@ fn setup_profile_callbacks(window: &AppWindow, profiles_model: &Rc<VecModel<Prof
         if let Some(mut row) = model.row_data(idx as usize) {
             row.sands = !row.sands;
             model.set_row_data(idx as usize, row);
+            window.set_dirty(true);
         }
     });
 
@@ -348,6 +355,7 @@ fn setup_profile_callbacks(window: &AppWindow, profiles_model: &Rc<VecModel<Prof
         if let Some(mut row) = model.row_data(idx as usize) {
             row.gestures = !row.gestures;
             model.set_row_data(idx as usize, row);
+            window.set_dirty(true);
         }
     });
 
@@ -362,8 +370,62 @@ fn setup_profile_callbacks(window: &AppWindow, profiles_model: &Rc<VecModel<Prof
         if let Some(mut row) = model.row_data(idx as usize) {
             row.shortcuts = !row.shortcuts;
             model.set_row_data(idx as usize, row);
+            window.set_dirty(true);
         }
     });
+}
+
+fn setup_log_callback(window: &AppWindow) {
+    let window_weak = window.as_weak();
+    window.on_open_log_file(move || {
+        let window = window_weak.unwrap();
+        let Some(exe) = std::env::current_exe().ok() else {
+            window.set_status_text("ログファイルの場所を特定できません".into());
+            return;
+        };
+        let Some(dir) = exe.parent() else {
+            window.set_status_text("ログファイルの場所を特定できません".into());
+            return;
+        };
+        let log_path = dir.join("log");
+        if !log_path.exists() {
+            window.set_status_text("ログファイルが見つかりません".into());
+            return;
+        }
+        if !open_with_default_app(&log_path) {
+            window.set_status_text("ログファイルを開けませんでした".into());
+        }
+    });
+}
+
+#[cfg(windows)]
+fn open_with_default_app(path: &Path) -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+    let path_wide: Vec<u16> = path
+        .to_string_lossy()
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let verb: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(path_wide.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    result.0 as isize > 32
+}
+
+#[cfg(not(windows))]
+fn open_with_default_app(_path: &Path) -> bool {
+    false
 }
 
 fn setup_daemon_callbacks(window: &AppWindow) {
@@ -450,6 +512,7 @@ fn setup_save_callback(
             disable_keys.push("shift".to_string());
         }
         base_cfg.disable_keys = disable_keys;
+        base_cfg.enable_ctrl_space_ime_toggle = window.get_enable_ctrl_space_ime_toggle();
 
         for row in model.iter() {
             if let Some(p) = base_cfg.profiles.get_mut(row.name.as_str()) {
@@ -464,7 +527,10 @@ fn setup_save_callback(
         }
 
         match save_config(&base_cfg) {
-            Ok(()) => window.set_status_text("保存しました".into()),
+            Ok(()) => {
+                window.set_status_text("保存しました".into());
+                window.set_dirty(false);
+            }
             Err(e) => window.set_status_text(format!("保存に失敗: {e}").into()),
         }
         refresh_profile_layout_text(&window, &base_cfg);
@@ -487,7 +553,24 @@ fn run_settings_window() -> Result<()> {
     setup_browse_callbacks(&window, &profiles_model);
     setup_profile_callbacks(&window, &profiles_model);
     setup_daemon_callbacks(&window);
+    setup_log_callback(&window);
     setup_save_callback(&window, cfg, &profiles_model, custom_disable_keys);
+
+    // Loading the config into the window above calls `set_X(...)` for every
+    // field; Slint only delivers the resulting `changed` notifications once
+    // the event loop starts running, i.e. *after* this function returns. The
+    // `loading` guard (checked by every `changed` handler, see app-window.slint)
+    // suppresses those during setup; clearing it here, before show()/the event
+    // loop, would still race the deferred notifications and leave the form
+    // spuriously dirty. Deferring the clear via `invoke_from_event_loop`
+    // queues it behind those notifications so it always runs last.
+    let window_weak = window.as_weak();
+    slint::invoke_from_event_loop(move || {
+        if let Some(window) = window_weak.upgrade() {
+            window.set_loading(false);
+            window.set_dirty(false);
+        }
+    })?;
 
     window.show()?;
     spawn_always_on_top();

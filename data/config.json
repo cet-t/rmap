@@ -33,5 +33,6 @@
   "enable_sands_ime_on": true,
   "enable_sands_ime_off": true,
   "dispatch_rate_ms": 5,
-  "prefix_window_ms": 300
+  "prefix_window_ms": 300,
+  "enable_ctrl_space_ime_toggle": true
 }
